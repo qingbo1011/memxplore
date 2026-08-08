@@ -93,6 +93,8 @@ v0.1.0 release gate 包含确定性生命周期场景、完整 500-case LongMemE
 - [API、CLI、MCP、SDK 与 AgentEvent](docs/api.zh-CN.md)
 - [评测证据](docs/evaluation.zh-CN.md)
 - [平台支持范围](docs/platform-support.md)
+- [Release 验证流程](docs/release.md)
+- [版本变更](CHANGELOG.md)
 - [路线图](docs/ROADMAP.md)
 - [贡献指南](CONTRIBUTING.md)
 - [第三方声明](THIRD_PARTY_NOTICES.md)

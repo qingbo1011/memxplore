@@ -63,6 +63,30 @@ memxplore recall \
 
 Lifecycle commands are `archive`, `forget`, and `purge`. Purge is irreversible, transitively handles derived content, requires `memory:purge`, and the CLI additionally requires `--confirm`.
 
+## Data portability and recovery
+
+Export one subject using an explicit local authorization scope, validate the document, exercise every import constraint without writing, and then import it:
+
+```sh
+memxplore data export \
+  --db ./source.sqlite \
+  --namespace local --principal local-cli --owners local \
+  --subject user-a --output ./user-a.memxplore.json
+
+memxplore data validate --input ./user-a.memxplore.json
+memxplore data import --db ./target.sqlite \
+  --input ./user-a.memxplore.json --dry-run
+memxplore data import --db ./target.sqlite \
+  --input ./user-a.memxplore.json
+memxplore data validate --db ./target.sqlite
+```
+
+Exports use `memxplore.subject-export` schema 1, are written with mode `0600`, and refuse to overwrite an existing path. They contain authorized observations, episodes/outcomes referenced by lessons, working sets, stable memories, and every immutable memory version. They exclude API credentials, provider embeddings, durable jobs, retrieval traces, usage telemetry, generated artifact bytes, and model weights. References must be self-contained, subject-bound, acyclic, and visibility-safe or export/import fails.
+
+`data import --dry-run` performs the same transactional inserts, indexes, uniqueness checks, and foreign-key checks before rolling back. A real import into any non-empty database first creates and integrity-checks an online backup beside that database. `data backup` and `data restore` expose the same verified SQLite backup path; restore refuses replacement unless `--overwrite` is explicit, and then preserves the replaced database.
+
+The authenticated REST equivalent is `GET /v1/subjects/{id}/export`. Its authorization comes only from the server-side principal. The Go SDK exposes it as `ExportSubject`.
+
 ## MCP
 
 Run a local stdio server with:
@@ -100,7 +124,7 @@ remembered, err := client.Remember(ctx, sdk.RememberRequest{
 })
 ```
 
-The client also exposes `Health`, `Version`, `Recall`, `Job`, `Archive`, `Forget`, `Purge`, and `IngestAgentEvent`. Non-2xx responses become typed `*sdk.APIError` values.
+The client also exposes `Health`, `Version`, `Recall`, `ExportSubject`, `Job`, `Archive`, `Forget`, `Purge`, and `IngestAgentEvent`. Non-2xx responses become typed `*sdk.APIError` values.
 
 ## AgentEvent v1
 

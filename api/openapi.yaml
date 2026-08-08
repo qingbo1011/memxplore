@@ -84,6 +84,29 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/subjects/{id}/export:
+    get:
+      operationId: exportSubject
+      summary: Export one authorized data subject
+      description: >-
+        Requires memory:read. The server derives namespace, private owners, and shared/public
+        access from the authenticated principal. The schema-v1 response excludes credentials,
+        provider embeddings, jobs, operational traces, and artifact bytes.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Self-contained authorized subject export
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SubjectExport" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: The selected records do not form a valid self-contained export
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
   /v1/jobs/{id}:
     get:
       operationId: getJob
@@ -285,7 +308,7 @@ components:
         source_kind: { type: string, default: api }
         source_reference: { type: string }
         content: { $ref: "#/components/schemas/Content" }
-        evidence_class: { enum: [untrusted, asserted, verified, policy] }
+        evidence_class: { enum: [untrusted, trusted, policy] }
         policy_authority: { type: string }
         captured_at: { type: string, format: date-time }
         metadata: { type: object, additionalProperties: { type: string } }
@@ -358,6 +381,35 @@ components:
               score: { type: object }
         groups: { type: array, items: { type: object } }
         trace: { type: object }
+    SubjectExport:
+      type: object
+      additionalProperties: false
+      required:
+        - format
+        - schema_version
+        - exported_at
+        - namespace
+        - subject
+        - private_owners
+        - include_shared
+        - include_public
+        - observations
+        - episodes
+        - working_sets
+        - memories
+      properties:
+        format: { const: memxplore.subject-export }
+        schema_version: { const: 1 }
+        exported_at: { type: string, format: date-time }
+        namespace: { type: string }
+        subject: { type: string }
+        private_owners: { type: array, minItems: 1, items: { type: string } }
+        include_shared: { type: boolean }
+        include_public: { type: boolean }
+        observations: { type: array, items: { type: object, additionalProperties: true } }
+        episodes: { type: array, items: { type: object, additionalProperties: true } }
+        working_sets: { type: array, items: { type: object, additionalProperties: true } }
+        memories: { type: array, items: { type: object, additionalProperties: true } }
     TokenCreateRequest:
       type: object
       additionalProperties: false

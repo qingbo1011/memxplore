@@ -62,6 +62,30 @@ memxplore recall \
 
 生命周期命令包括 `archive`、`forget` 与 `purge`。Purge 不可逆，会处理传递派生内容，需要 `memory:purge` scope，CLI 还要求显式传入 `--confirm`。
 
+## 数据携带与恢复
+
+以下命令按明确的本地授权范围导出一个 subject，校验文件，执行零写入 dry-run，然后正式导入：
+
+```sh
+memxplore data export \
+  --db ./source.sqlite \
+  --namespace local --principal local-cli --owners local \
+  --subject user-a --output ./user-a.memxplore.json
+
+memxplore data validate --input ./user-a.memxplore.json
+memxplore data import --db ./target.sqlite \
+  --input ./user-a.memxplore.json --dry-run
+memxplore data import --db ./target.sqlite \
+  --input ./user-a.memxplore.json
+memxplore data validate --db ./target.sqlite
+```
+
+导出格式为 `memxplore.subject-export` schema 1，文件权限是 `0600`，目标路径已存在时拒绝覆盖。文件包含已授权的 Observation、lesson 引用的 episode/outcome、WorkingSet、稳定 Memory 以及全部 immutable version；不包含 API credential、provider embedding、durable job、retrieval trace、usage telemetry、生成 artifact 的字节、模型权重。所有引用必须自包含、属于同一 subject、无环且不扩大 visibility，否则导出或导入失败。
+
+`data import --dry-run` 会执行与正式导入相同的事务写入、索引、唯一性约束和 foreign-key check，随后回滚。正式导入任何非空数据库前，会在数据库旁创建并校验 online backup。`data backup` 与 `data restore` 暴露同一套 SQLite online backup；restore 默认拒绝替换，显式使用 `--overwrite` 时也会保留被替换数据库。
+
+对应的认证 REST 接口是 `GET /v1/subjects/{id}/export`，授权范围只取自服务端 principal。Go SDK 对应方法为 `ExportSubject`。
+
 ## MCP
 
 本地 stdio MCP server：

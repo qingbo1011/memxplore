@@ -139,7 +139,11 @@ func (c *Client) post(ctx context.Context, path string, input, output any) error
 		return fmt.Errorf("provider response exceeds %d bytes", maxResponseBytes)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("provider returned HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(data)))
+		message := strings.TrimSpace(string(data))
+		if len(message) > 4096 {
+			message = message[:4096] + "…"
+		}
+		return fmt.Errorf("provider returned HTTP %d: %s", response.StatusCode, message)
 	}
 	if err := json.Unmarshal(data, output); err != nil {
 		return fmt.Errorf("decode provider response: %w", err)

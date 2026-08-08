@@ -1,0 +1,24 @@
+.DS_Store
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+bin/
+coverage.out
+dist/
+tmp/
+var/
+
+# Local credentials and provider configuration.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Experiments are immutable but may be large. Commit only curated fixtures.
+runs/
+datasets/
+models/
+

@@ -16,6 +16,7 @@ type ProposalKind string
 const (
 	ProposalCreate      ProposalKind = "create"
 	ProposalUpdate      ProposalKind = "update"
+	ProposalArchive     ProposalKind = "archive"
 	ProposalForget      ProposalKind = "forget"
 	ProposalConsolidate ProposalKind = "consolidate"
 )
@@ -47,7 +48,7 @@ func (p Proposal) Validate() error {
 		if p.TargetID != "" {
 			return fmt.Errorf("create proposal cannot name an existing target")
 		}
-	case ProposalUpdate, ProposalForget, ProposalConsolidate:
+	case ProposalUpdate, ProposalArchive, ProposalForget, ProposalConsolidate:
 		if p.TargetID == "" {
 			return fmt.Errorf("%s proposal requires a target", p.Kind)
 		}

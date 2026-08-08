@@ -24,15 +24,6 @@ const (
 	ModeAssisted      Mode = "assisted"
 )
 
-// FormationPayload is typed input for the policy-controlled apply phase.
-type FormationPayload struct {
-	Scope      domain.Scope          `json:"scope"`
-	Function   domain.MemoryFunction `json:"function"`
-	Taxonomy   domain.Taxonomy       `json:"taxonomy"`
-	Payload    domain.MemoryPayload  `json:"payload"`
-	Provenance []domain.EvidenceRef  `json:"provenance"`
-}
-
 // Strategy creates proposals for exactly one functional memory class.
 type Strategy struct {
 	mode       Mode
@@ -90,7 +81,7 @@ func (s *Strategy) Propose(ctx context.Context, observation domain.Observation) 
 	if err := payload.Validate(s.function); err != nil {
 		return application.Proposal{}, fmt.Errorf("validate formed payload: %w", err)
 	}
-	formation := FormationPayload{
+	formation := application.MemoryCreate{
 		Scope: observation.Scope, Function: s.function,
 		Taxonomy: taxonomy(s.function, s.mode), Payload: payload,
 		Provenance: provenance(observation),

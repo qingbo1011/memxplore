@@ -103,7 +103,7 @@ func TestAssistedOutputRejectsUnknownFields(t *testing.T) {
 
 func assertFormationPayload(t *testing.T, proposal application.Proposal, function domain.MemoryFunction) {
 	t.Helper()
-	var formed FormationPayload
+	var formed application.MemoryCreate
 	if err := json.Unmarshal(proposal.Payload, &formed); err != nil {
 		t.Fatal(err)
 	}

@@ -69,6 +69,7 @@ Security issues should be reported according to [SECURITY.md](SECURITY.md).
 - [Architecture decisions](docs/architecture/adr/README.md)
 - [Strategy Packages](docs/strategy-packages.md)
 - [Provider configuration](docs/providers.md)
+- [Retrieval contract](docs/retrieval.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Contributing](CONTRIBUTING.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)

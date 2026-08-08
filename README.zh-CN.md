@@ -69,6 +69,7 @@ go run ./cmd/memxplore version --json
 - [架构决策](docs/architecture/adr/README.md)
 - [Strategy Package 设计](docs/strategy-packages.md)
 - [Provider 配置](docs/providers.md)
+- [检索契约](docs/retrieval.md)
 - [路线图](docs/ROADMAP.md)
 - [贡献指南](CONTRIBUTING.md)
 - [第三方声明](THIRD_PARTY_NOTICES.md)

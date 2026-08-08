@@ -24,12 +24,16 @@ jobs:
             echo "$files"
             exit 1
           fi
+      - name: Validate OpenAPI
+        run: npx -y @redocly/cli@2.46.0 lint api/openapi.yaml --format stylish
       - name: Vet
         run: go vet ./...
       - name: Static analysis
         run: go run honnef.co/go/tools/cmd/staticcheck@2025.1.1 ./...
       - name: Unit and race tests
         run: go test -race -coverprofile=coverage.out ./...
+      - name: Security release gates
+        run: go test ./internal/strategy/formation ./internal/adapters/sqlite -run '^TestSecurityGate' -v
       - name: Deterministic benchmark
         run: |
           go run ./cmd/memxplore benchmark internal \

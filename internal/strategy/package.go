@@ -11,14 +11,25 @@ import (
 	"strings"
 )
 
+// ImplementationLabel states the claim made about an executable strategy.
+type ImplementationLabel string
+
+const (
+	ImplementationBaseline     ImplementationLabel = "baseline"
+	ImplementationReference    ImplementationLabel = "reference"
+	ImplementationAdapter      ImplementationLabel = "adapter"
+	ImplementationExperimental ImplementationLabel = "experimental"
+	ImplementationReproduction ImplementationLabel = "reproduction"
+)
+
 // Fidelity describes how strongly a package is verified against its source.
 type Fidelity string
 
 const (
-	FidelityOriginal         Fidelity = "original"
-	FidelityReimplementation Fidelity = "reimplementation"
-	FidelityAdaptation       Fidelity = "adaptation"
-	FidelityBaseline         Fidelity = "baseline"
+	FidelityNone               Fidelity = "none"
+	FidelityConceptual         Fidelity = "conceptual"
+	FidelityProtocolCompatible Fidelity = "protocol-compatible"
+	FidelityResultVerified     Fidelity = "result-verified"
 )
 
 // RepairPolicy bounds schema repair instead of hiding retries in adapters.
@@ -29,16 +40,17 @@ type RepairPolicy struct {
 
 // Package is the complete immutable identity of a strategy implementation.
 type Package struct {
-	ID             string          `json:"id"`
-	Version        string          `json:"version"`
-	Implementation string          `json:"implementation"`
-	Fidelity       Fidelity        `json:"fidelity"`
-	Prompt         string          `json:"prompt,omitempty"`
-	JSONSchema     json.RawMessage `json:"json_schema,omitempty"`
-	Parameters     json.RawMessage `json:"parameters"`
-	Capabilities   []string        `json:"capabilities"`
-	Repair         RepairPolicy    `json:"repair"`
-	PaperSources   []string        `json:"paper_sources,omitempty"`
+	ID             string              `json:"id"`
+	Version        string              `json:"version"`
+	Implementation string              `json:"implementation"`
+	Label          ImplementationLabel `json:"implementation_label"`
+	Fidelity       Fidelity            `json:"fidelity"`
+	Prompt         string              `json:"prompt,omitempty"`
+	JSONSchema     json.RawMessage     `json:"json_schema,omitempty"`
+	Parameters     json.RawMessage     `json:"parameters"`
+	Capabilities   []string            `json:"capabilities"`
+	Repair         RepairPolicy        `json:"repair"`
+	PaperSources   []string            `json:"paper_sources,omitempty"`
 }
 
 // Validate checks versioning, provenance, and all embedded JSON.
@@ -46,10 +58,18 @@ func (p Package) Validate() error {
 	if strings.TrimSpace(p.ID) == "" || strings.TrimSpace(p.Version) == "" || strings.TrimSpace(p.Implementation) == "" {
 		return fmt.Errorf("strategy id, version, and implementation are required")
 	}
+	switch p.Label {
+	case ImplementationBaseline, ImplementationReference, ImplementationAdapter, ImplementationExperimental, ImplementationReproduction:
+	default:
+		return fmt.Errorf("strategy implementation label %q is invalid", p.Label)
+	}
 	switch p.Fidelity {
-	case FidelityOriginal, FidelityReimplementation, FidelityAdaptation, FidelityBaseline:
+	case FidelityNone, FidelityConceptual, FidelityProtocolCompatible, FidelityResultVerified:
 	default:
 		return fmt.Errorf("strategy fidelity %q is invalid", p.Fidelity)
+	}
+	if p.Label == ImplementationReproduction && p.Fidelity != FidelityResultVerified {
+		return fmt.Errorf("reproduction strategy requires result-verified fidelity")
 	}
 	if !json.Valid(p.Parameters) || (len(p.JSONSchema) > 0 && !json.Valid(p.JSONSchema)) {
 		return fmt.Errorf("strategy parameters and schema must be valid JSON")

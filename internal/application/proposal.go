@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -37,7 +38,8 @@ type Proposal struct {
 
 // Validate rejects unauditable proposals at the application boundary.
 func (p Proposal) Validate() error {
-	if p.ID == "" || p.Namespace == "" || len(p.ObservationIDs) == 0 || p.StrategyID == "" || len(p.StrategyHash) != 64 || p.CreatedAt.IsZero() {
+	strategyDigest, hashErr := hex.DecodeString(p.StrategyHash)
+	if p.ID == "" || p.Namespace == "" || len(p.ObservationIDs) == 0 || p.StrategyID == "" || hashErr != nil || len(strategyDigest) != 32 || p.CreatedAt.IsZero() {
 		return fmt.Errorf("proposal identity, evidence, strategy, hash, and timestamp are required")
 	}
 	switch p.Kind {

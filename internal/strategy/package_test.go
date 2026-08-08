@@ -8,9 +8,22 @@ import (
 func testPackage() Package {
 	return Package{
 		ID: "formation.factual.generator-free", Version: "1.0.0", Implementation: "builtin",
-		Fidelity: FidelityBaseline, Parameters: json.RawMessage(`{"threshold": 0.5, "mode":"exact"}`),
+		Label: ImplementationReference, Fidelity: FidelityConceptual,
+		Parameters:   json.RawMessage(`{"threshold": 0.5, "mode":"exact"}`),
 		Capabilities: []string{"factual", "formation"}, Repair: RepairPolicy{Strict: true},
 		PaperSources: []string{"section-5", "section-3"},
+	}
+}
+
+func TestReproductionRequiresVerifiedResults(t *testing.T) {
+	pkg := testPackage()
+	pkg.Label = ImplementationReproduction
+	if _, err := pkg.Hash(); err == nil {
+		t.Fatal("unverified package claimed reproduction")
+	}
+	pkg.Fidelity = FidelityResultVerified
+	if _, err := pkg.Hash(); err != nil {
+		t.Fatalf("verified reproduction rejected: %v", err)
 	}
 }
 

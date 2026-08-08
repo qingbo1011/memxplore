@@ -92,6 +92,7 @@ Security issues should be reported according to [SECURITY.md](SECURITY.md).
 - [Memory lifecycle](docs/lifecycle.md)
 - [API, CLI, MCP, SDK, and AgentEvent](docs/api.md)
 - [Evaluation evidence](docs/evaluation.md)
+- [Platform support](docs/platform-support.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Contributing](CONTRIBUTING.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)

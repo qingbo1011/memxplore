@@ -138,3 +138,16 @@ func TestListenIsLoopback(t *testing.T) {
 		}
 	}
 }
+
+func TestProviderURLIsLoopback(t *testing.T) {
+	for _, endpoint := range []string{"http://127.0.0.1:11434/v1", "http://localhost:11434/v1", "http://[::1]:11434/v1"} {
+		if !providerURLIsLoopback(endpoint) {
+			t.Fatalf("%s should be loopback", endpoint)
+		}
+	}
+	for _, endpoint := range []string{"https://api.example.com/v1", "file:///tmp/provider", "not-a-url"} {
+		if providerURLIsLoopback(endpoint) {
+			t.Fatalf("%s should not be loopback", endpoint)
+		}
+	}
+}

@@ -27,9 +27,10 @@ func Score(predictions []Prediction, topK int) Metrics {
 			current := metrics.Variants[variant]
 			metrics.Ablations = append(metrics.Ablations, Ablation{
 				Baseline: "no-memory", Variant: variant,
-				RecallAtKDelta: current.RecallAtK - baseline.RecallAtK,
-				MRRDelta:       current.MRR - baseline.MRR,
-				LatencyMSDelta: current.LatencyMeanMS - baseline.LatencyMeanMS,
+				RecallAtKDelta:      current.RecallAtK - baseline.RecallAtK,
+				MRRDelta:            current.MRR - baseline.MRR,
+				AnswerAccuracyDelta: current.AnswerAccuracy - baseline.AnswerAccuracy,
+				LatencyMSDelta:      current.LatencyMeanMS - baseline.LatencyMeanMS,
 			})
 		}
 	}
@@ -50,6 +51,12 @@ func scoreVariant(predictions []Prediction, topK int) VariantMetrics {
 		result.RetrievedTokens += prediction.RetrievedTokens
 		if prediction.Failure != nil {
 			result.Failures++
+		}
+		if prediction.AnswerCorrect != nil {
+			result.AnswerCases++
+			if *prediction.AnswerCorrect {
+				result.AnswerCorrect++
+			}
 		}
 		if len(prediction.ExpectedReferences) == 0 {
 			result.AbstentionCases++
@@ -91,6 +98,9 @@ func scoreVariant(predictions []Prediction, topK int) VariantMetrics {
 	if result.EvaluableCases > 0 {
 		count := float64(result.EvaluableCases)
 		result.HitAtK, result.RecallAtK, result.MRR = hitSum/count, recallSum/count, reciprocalSum/count
+	}
+	if result.AnswerCases > 0 {
+		result.AnswerAccuracy = float64(result.AnswerCorrect) / float64(result.AnswerCases)
 	}
 	if result.AbstentionCases > 0 {
 		result.AbstentionAccuracy = abstentionCorrect / float64(result.AbstentionCases)

@@ -81,6 +81,11 @@ type Prediction struct {
 	Category           string            `json:"category"`
 	Variant            string            `json:"variant"`
 	Query              string            `json:"query"`
+	ExpectedAnswer     string            `json:"expected_answer,omitempty"`
+	GeneratedAnswer    string            `json:"generated_answer,omitempty"`
+	AnswerCorrect      *bool             `json:"answer_correct,omitempty"`
+	AnswerEvaluator    string            `json:"answer_evaluator,omitempty"`
+	FinishReason       string            `json:"finish_reason,omitempty"`
 	ExpectedReferences []string          `json:"expected_references"`
 	Retrieved          []RankedReference `json:"retrieved"`
 	TraceIDs           []string          `json:"trace_ids"`
@@ -115,6 +120,9 @@ type VariantMetrics struct {
 	Cases              int     `json:"cases"`
 	EvaluableCases     int     `json:"evaluable_cases"`
 	AbstentionCases    int     `json:"abstention_cases"`
+	AnswerCases        int     `json:"answer_cases"`
+	AnswerCorrect      int     `json:"answer_correct"`
+	AnswerAccuracy     float64 `json:"answer_accuracy"`
 	HitAtK             float64 `json:"hit_at_k"`
 	RecallAtK          float64 `json:"recall_at_k"`
 	MRR                float64 `json:"mrr"`
@@ -132,11 +140,12 @@ type VariantMetrics struct {
 
 // Ablation reports paired deltas from a baseline arm.
 type Ablation struct {
-	Baseline       string  `json:"baseline"`
-	Variant        string  `json:"variant"`
-	RecallAtKDelta float64 `json:"recall_at_k_delta"`
-	MRRDelta       float64 `json:"mrr_delta"`
-	LatencyMSDelta float64 `json:"latency_mean_ms_delta"`
+	Baseline            string  `json:"baseline"`
+	Variant             string  `json:"variant"`
+	RecallAtKDelta      float64 `json:"recall_at_k_delta"`
+	MRRDelta            float64 `json:"mrr_delta"`
+	AnswerAccuracyDelta float64 `json:"answer_accuracy_delta"`
+	LatencyMSDelta      float64 `json:"latency_mean_ms_delta"`
 }
 
 // Metrics contains all aggregate results without a leaderboard target.
@@ -188,6 +197,9 @@ func (r Run) Validate() error {
 		}
 		if _, ok := variantIDs[prediction.Variant]; !ok {
 			return fmt.Errorf("prediction references unknown variant %q", prediction.Variant)
+		}
+		if prediction.AnswerCorrect != nil && (prediction.ExpectedAnswer == "" || prediction.GeneratedAnswer == "" || prediction.AnswerEvaluator == "") {
+			return fmt.Errorf("scored answer for case %q is incomplete", prediction.CaseID)
 		}
 		key := prediction.CaseID + "\x00" + prediction.Variant
 		if _, duplicate := seenPredictions[key]; duplicate {

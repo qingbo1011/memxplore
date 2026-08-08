@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	ollamaprovider "github.com/qingbo1011/memxplore/internal/adapters/provider/ollama"
 	"github.com/qingbo1011/memxplore/internal/adapters/provider/openaicompat"
 	"github.com/qingbo1011/memxplore/internal/adapters/sqlite"
 	"github.com/qingbo1011/memxplore/internal/agentevent"
@@ -568,7 +570,7 @@ func ingestCommand(ctx context.Context, args []string, stdin io.Reader, stdout, 
 
 func benchmarkCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: memxplore benchmark <internal|longmemeval-v1|longmemeval-v2-small> [options]")
+		fmt.Fprintln(stderr, "usage: memxplore benchmark <internal|longmemeval-v1|longmemeval-v1-local-answer|longmemeval-v2-small> [options]")
 		return 2
 	}
 	var output, otelEndpoint, otelServiceName string
@@ -609,6 +611,45 @@ func benchmarkCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 			return evaluation.RunLongMemEvalV1(ctx, evaluation.LongMemEvalV1Config{
 				DatasetPath: *dataset, Revision: *revision, RunID: *runID, Seed: *seed, Limit: *limit, TopK: *topK,
 				WorkDir: *workDir, Observability: recorder,
+			})
+		}
+	case "longmemeval-v1-local-answer":
+		flags := flag.NewFlagSet("benchmark longmemeval-v1-local-answer", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		outputFlag := flags.String("output", "runs", "immutable run output root")
+		dataset := flags.String("dataset", "", "path to longmemeval_s_cleaned.json")
+		revision := flags.String("revision", "", "pinned upstream dataset revision")
+		runID := flags.String("run-id", "", "optional unique run identifier")
+		seed := flags.Int64("seed", 1, "fixture seed recorded in the manifest")
+		limit := flags.Int("limit", 2, "first N cases, within [1,10]")
+		topK := flags.Int("top-k", 5, "retrieval cutoff")
+		tokenBudget := flags.Int("token-budget", 4096, "maximum retrieved evidence tokens")
+		maxTokens := flags.Int("max-tokens", 128, "maximum generated answer tokens")
+		workDir := flags.String("work-dir", "", "optional temporary SQLite parent directory")
+		ollamaURL := flags.String("ollama-url", "http://127.0.0.1:11434", "explicit loopback Ollama native base URL")
+		model := flags.String("model", defaultGeneratorModel, "installed local Ollama generator model")
+		timeout := flags.Duration("timeout", 10*time.Minute, "per-request local generation timeout")
+		addCommandTelemetryFlags(flags, &otelEndpoint, &otelServiceName)
+		if err := flags.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if !providerURLIsLoopback(*ollamaURL) {
+			return cliError(stderr, fmt.Errorf("local answer benchmark requires a loopback --ollama-url"))
+		}
+		if *timeout <= 0 || *timeout > 30*time.Minute {
+			return cliError(stderr, fmt.Errorf("--timeout must be within (0,30m]"))
+		}
+		output = *outputFlag
+		runBenchmark = func(recorder observability.Recorder) (evaluation.Run, error) {
+			disableThinking := false
+			generator, err := ollamaprovider.New(ollamaprovider.Config{BaseURL: *ollamaURL, Think: &disableThinking, Client: &http.Client{Timeout: *timeout}})
+			if err != nil {
+				return evaluation.Run{}, err
+			}
+			return evaluation.RunLongMemEvalV1AnswerSubset(ctx, evaluation.LongMemEvalV1AnswerConfig{
+				DatasetPath: *dataset, Revision: *revision, RunID: *runID, Seed: *seed, Limit: *limit, TopK: *topK,
+				TokenBudget: *tokenBudget, MaxTokens: *maxTokens, WorkDir: *workDir,
+				Provider: "ollama-native", Model: *model, Generator: generator, Observability: recorder,
 			})
 		}
 	case "longmemeval-v2-small":
@@ -694,6 +735,19 @@ func listenIsLoopback(address string) bool {
 	if err != nil {
 		return false
 	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func providerURLIsLoopback(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return false
+	}
+	host := parsed.Hostname()
 	if strings.EqualFold(host, "localhost") {
 		return true
 	}

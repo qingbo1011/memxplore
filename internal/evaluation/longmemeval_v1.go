@@ -116,54 +116,12 @@ func RunLongMemEvalV1(ctx context.Context, config LongMemEvalV1Config) (_ Run, f
 		if err := validateLongMemEvalV1(instance); err != nil {
 			return fmt.Errorf("case %d: %w", index, err)
 		}
-		scope := domain.Scope{
-			Namespace: "eval-longmemeval-v1", Owner: "longmemeval-v1", Subject: stableEvalID("subject", instance.QuestionID),
-			Actor: "eval-adapter", Context: stableEvalID("question", instance.QuestionID), Visibility: domain.VisibilityPrivate,
+		memoryCase, err := ingestLongMemEvalV1Case(ctx, service, adapter, adapterHash, index, instance)
+		if err != nil {
+			return err
 		}
-		versionSessions := make(map[domain.ID]string, len(instance.HaystackSessions))
-		indexedSessions := make(map[string]struct{}, len(instance.HaystackSessions))
-		caseBase := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(index) * 24 * time.Hour)
-		for sessionIndex, turns := range instance.HaystackSessions {
-			sessionID := instance.HaystackSessionIDs[sessionIndex]
-			if _, duplicate := indexedSessions[sessionID]; duplicate {
-				continue
-			}
-			indexedSessions[sessionID] = struct{}{}
-			text := longMemEvalSessionText(instance.HaystackDates[sessionIndex], turns)
-			if text == "" {
-				return fmt.Errorf("case %s session %d is empty", instance.QuestionID, sessionIndex)
-			}
-			observationID := stableEvalID("obs", instance.QuestionID, sessionID)
-			capturedAt := caseBase.Add(time.Duration(sessionIndex) * time.Second)
-			create := application.MemoryCreate{
-				Scope: scope, Function: domain.FunctionFactual,
-				Taxonomy: domain.Taxonomy{
-					Forms: []string{"token-flat"}, Functions: []string{"factual"}, Dynamics: []string{"formation", "retrieval"},
-					Tags: []string{"adapter", "benchmark"},
-				},
-				Payload: domain.MemoryPayload{Factual: &domain.FactualMemory{
-					ClaimSubject: scope.Subject, Predicate: "longmemeval-session",
-					Object: domain.Content{Parts: []domain.ContentPart{{Kind: domain.PartText, Text: text}}}, Epistemic: domain.EpistemicAsserted,
-				}},
-				Provenance: []domain.EvidenceRef{{ObservationID: observationID, PartIndex: 0}},
-				ValidTime:  &domain.TimeRange{From: capturedAt},
-			}
-			payload, _ := json.Marshal(create)
-			proposal := application.Proposal{
-				ID: stableEvalID("proposal", instance.QuestionID, sessionID), Namespace: scope.Namespace,
-				ObservationIDs: []domain.ID{observationID}, Kind: application.ProposalCreate, Payload: payload,
-				StrategyID: adapter.ID + "@" + adapter.Version, StrategyHash: adapterHash,
-				CreatedAt: capturedAt, UntrustedContent: true,
-			}
-			applied, err := service.Apply(ctx, scope, proposal, capturedAt.Add(time.Millisecond))
-			if err != nil {
-				return fmt.Errorf("ingest case %s session %s: %w", instance.QuestionID, sessionID, err)
-			}
-			versionSessions[applied.Version.ID] = sessionID
-			ingestTokens += estimateTokens(text)
-			indexed++
-		}
-		queryAt := caseBase.Add(time.Duration(len(instance.HaystackSessions)+1) * time.Second)
+		indexed += memoryCase.Indexed
+		ingestTokens += memoryCase.IngestTokens
 		expectedReferences := longMemEvalV1ExpectedReferences(instance)
 		noMemory := Prediction{
 			CaseID: instance.QuestionID, Category: instance.QuestionType, Variant: "no-memory", Query: instance.Question,
@@ -171,9 +129,9 @@ func RunLongMemEvalV1(ctx context.Context, config LongMemEvalV1Config) (_ Run, f
 		}
 		recallStarted := time.Now()
 		bundle, recallErr := retriever.Recall(ctx, application.RecallRequest{
-			Scope: scope, Access: application.AccessScope{PrincipalID: scope.Actor, Namespace: scope.Namespace, PrivateOwners: []domain.ID{scope.Owner}},
+			Scope: memoryCase.Scope, Access: application.AccessScope{PrincipalID: memoryCase.Scope.Actor, Namespace: memoryCase.Scope.Namespace, PrivateOwners: []domain.ID{memoryCase.Scope.Owner}},
 			Query: instance.Question, Functions: []domain.MemoryFunction{domain.FunctionFactual}, Mode: application.RetrievalLexical,
-			ValidAt: queryAt, SystemAt: queryAt, TokenBudget: 1_000_000, CandidateLimit: config.TopK,
+			ValidAt: memoryCase.QueryAt, SystemAt: memoryCase.QueryAt, TokenBudget: 1_000_000, CandidateLimit: config.TopK,
 		})
 		prediction := Prediction{
 			CaseID: instance.QuestionID, Category: instance.QuestionType, Variant: "lexical", Query: instance.Question,
@@ -186,7 +144,7 @@ func RunLongMemEvalV1(ctx context.Context, config LongMemEvalV1Config) (_ Run, f
 			prediction.TraceIDs = []string{string(bundle.Trace.ID)}
 			prediction.RetrievedTokens = bundle.Trace.TokensUsed
 			for rank, item := range bundle.Items {
-				sessionID := versionSessions[item.VersionID]
+				sessionID := memoryCase.VersionSessions[item.VersionID]
 				prediction.Retrieved = append(prediction.Retrieved, RankedReference{
 					Reference: sessionID, Rank: rank + 1, Score: item.Score.Total,
 					MemoryID: string(item.MemoryID), VersionID: string(item.VersionID),
@@ -244,6 +202,66 @@ func RunLongMemEvalV1(ctx context.Context, config LongMemEvalV1Config) (_ Run, f
 	observer.Observe(ctx, observability.MetricBenchmarkCases, float64(cases), observability.String("benchmark", manifest.Benchmark))
 	observer.Observe(ctx, observability.MetricBenchmarkFailures, float64(metrics.Variants["lexical"].Failures), observability.String("benchmark", manifest.Benchmark), observability.String("variant", "lexical"))
 	return Run{Manifest: manifest, Predictions: predictions, Metrics: metrics, Traces: traces}, nil
+}
+
+type longMemEvalV1MemoryCase struct {
+	Scope           domain.Scope
+	QueryAt         time.Time
+	VersionSessions map[domain.ID]string
+	Indexed         int
+	IngestTokens    int
+}
+
+func ingestLongMemEvalV1Case(ctx context.Context, service *application.LifecycleService, adapter strategydef.Package, adapterHash string, index int, instance longMemEvalV1Instance) (longMemEvalV1MemoryCase, error) {
+	scope := domain.Scope{
+		Namespace: "eval-longmemeval-v1", Owner: "longmemeval-v1", Subject: stableEvalID("subject", instance.QuestionID),
+		Actor: "eval-adapter", Context: stableEvalID("question", instance.QuestionID), Visibility: domain.VisibilityPrivate,
+	}
+	result := longMemEvalV1MemoryCase{Scope: scope, VersionSessions: make(map[domain.ID]string, len(instance.HaystackSessions))}
+	indexedSessions := make(map[string]struct{}, len(instance.HaystackSessions))
+	caseBase := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(index) * 24 * time.Hour)
+	for sessionIndex, turns := range instance.HaystackSessions {
+		sessionID := instance.HaystackSessionIDs[sessionIndex]
+		if _, duplicate := indexedSessions[sessionID]; duplicate {
+			continue
+		}
+		indexedSessions[sessionID] = struct{}{}
+		text := longMemEvalSessionText(instance.HaystackDates[sessionIndex], turns)
+		if text == "" {
+			return longMemEvalV1MemoryCase{}, fmt.Errorf("case %s session %d is empty", instance.QuestionID, sessionIndex)
+		}
+		observationID := stableEvalID("obs", instance.QuestionID, sessionID)
+		capturedAt := caseBase.Add(time.Duration(sessionIndex) * time.Second)
+		create := application.MemoryCreate{
+			Scope: scope, Function: domain.FunctionFactual,
+			Taxonomy: domain.Taxonomy{
+				Forms: []string{"token-flat"}, Functions: []string{"factual"}, Dynamics: []string{"formation", "retrieval"},
+				Tags: []string{"adapter", "benchmark"},
+			},
+			Payload: domain.MemoryPayload{Factual: &domain.FactualMemory{
+				ClaimSubject: scope.Subject, Predicate: "longmemeval-session",
+				Object: domain.Content{Parts: []domain.ContentPart{{Kind: domain.PartText, Text: text}}}, Epistemic: domain.EpistemicAsserted,
+			}},
+			Provenance: []domain.EvidenceRef{{ObservationID: observationID, PartIndex: 0}},
+			ValidTime:  &domain.TimeRange{From: capturedAt},
+		}
+		payload, _ := json.Marshal(create)
+		proposal := application.Proposal{
+			ID: stableEvalID("proposal", instance.QuestionID, sessionID), Namespace: scope.Namespace,
+			ObservationIDs: []domain.ID{observationID}, Kind: application.ProposalCreate, Payload: payload,
+			StrategyID: adapter.ID + "@" + adapter.Version, StrategyHash: adapterHash,
+			CreatedAt: capturedAt, UntrustedContent: true,
+		}
+		applied, err := service.Apply(ctx, scope, proposal, capturedAt.Add(time.Millisecond))
+		if err != nil {
+			return longMemEvalV1MemoryCase{}, fmt.Errorf("ingest case %s session %s: %w", instance.QuestionID, sessionID, err)
+		}
+		result.VersionSessions[applied.Version.ID] = sessionID
+		result.IngestTokens += estimateTokens(text)
+		result.Indexed++
+	}
+	result.QueryAt = caseBase.Add(time.Duration(len(instance.HaystackSessions)+1) * time.Second)
+	return result, nil
 }
 
 func streamLongMemEvalV1(ctx context.Context, path string, limit int, visit func(int, longMemEvalV1Instance) error) (cases int, err error) {

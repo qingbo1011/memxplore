@@ -6,7 +6,7 @@ MemXplore 是一套“可执行的 Agent Memory 全景参考实现与实验场�
 
 项目优先保证研究覆盖、学习价值、可复现性和诚实评测，而不是追求业务功能广度。它不是 Mem0 或 Zep 的生产级替代品；除非严格匹配论文协议与结果，否则实现绝不会被称作论文 reproduction。
 
-> 当前状态：v0.1.0 正在开发。公共协议已预留为 `/v1`，但在正式发布 `v0.1.0` 前不作稳定性承诺。
+> 当前状态：v0.1.0 是首个公开版本。程序遵循 Semantic Versioning；公共协议为 `/v1`，SQLite storage schema 为 `4`，portable export schema 为 `1`。
 
 ## v0.1 研究切片
 

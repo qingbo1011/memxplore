@@ -1,6 +1,6 @@
 # Roadmap
 
-## v0.1.0 - token-level lifecycle reference
+## v0.1.0 - token-level lifecycle reference (released 2026-08-08)
 
 - Repository charter, architecture decisions, research catalog, bilingual entrypoints, and CI.
 - Domain/application contracts and a CGO-free SQLite store with storage safety validation.
@@ -24,4 +24,3 @@ The following are deliberate roadmap items, not hidden v0.1 stretch goals:
 - Hermes and OpenClaw AgentEvent adapters.
 
 Roadmap entries are not availability promises. Each future release will define its own evidence-backed scope.
-

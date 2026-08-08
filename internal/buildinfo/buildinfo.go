@@ -12,5 +12,5 @@ const (
 	ExportSchemaVersion = 1
 )
 
-// Version is replaced at release build time with -ldflags.
-var Version = "0.1.0-dev"
+// Version is the program release version. Builders may override it with -ldflags.
+var Version = "0.1.0"

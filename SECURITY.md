@@ -2,7 +2,12 @@
 
 ## Supported versions
 
-Security support begins with the public `v0.1.0` release. Until then, `main` is development software and should not hold sensitive data.
+| Version | Supported |
+| --- | --- |
+| `0.1.x` | Yes |
+| Development revisions on `main` | No |
+
+MemXplore is a research reference rather than a production service. Do not use even a supported release as the sole store for sensitive or irreplaceable data.
 
 ## Reporting a vulnerability
 
@@ -17,4 +22,3 @@ Include the affected revision, threat scenario, minimal reproduction, and expect
 - TLS termination belongs at a reverse proxy.
 - Forget and purge are distinct; purge is explicit, irreversible, and audited without retaining deleted content.
 - Cloud credentials are never auto-discovered for release tests.
-

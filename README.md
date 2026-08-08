@@ -6,7 +6,7 @@ MemXplore is an executable panorama of agent-memory research: a reference implem
 
 The project prioritizes research coverage, learning value, reproducibility, and honest evaluation over product breadth. It is not a production replacement for Mem0 or Zep, and an implementation is never called a paper reproduction unless its protocol and results have been matched.
 
-> Status: v0.1.0 is under active development. The public protocol is already reserved as `/v1`, but no stability claim applies until the `v0.1.0` release is published.
+> Status: v0.1.0 is the first public release. The program follows Semantic Versioning; the public protocol is `/v1`, SQLite storage schema is `4`, and portable export schema is `1`.
 
 ## v0.1 research slice
 

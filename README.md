@@ -67,6 +67,8 @@ Security issues should be reported according to [SECURITY.md](SECURITY.md).
 
 - [Project charter](docs/CHARTER.md)
 - [Architecture decisions](docs/architecture/adr/README.md)
+- [Strategy Packages](docs/strategy-packages.md)
+- [Provider configuration](docs/providers.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Contributing](CONTRIBUTING.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)

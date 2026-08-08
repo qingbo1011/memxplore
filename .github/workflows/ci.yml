@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Check formatting
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            echo "$files"
+            exit 1
+          fi
+      - name: Vet
+        run: go vet ./...
+      - name: Static analysis
+        run: go run honnef.co/go/tools/cmd/staticcheck@2025.1.1 ./...
+      - name: Unit and race tests
+        run: go test -race -coverprofile=coverage.out ./...
+
+  cross-build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            goarch: arm64
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build ./cmd/memxplore
+

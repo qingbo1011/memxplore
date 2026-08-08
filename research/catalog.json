@@ -2,7 +2,7 @@
   "$schema": "./catalog.schema.json",
   "schema_version": 1,
   "snapshot": {
-    "id": "2026-08-08.1",
+    "id": "2026-08-08.2",
     "published_at": "2026-08-08T00:00:00Z",
     "review_status": "reviewed"
   },
@@ -57,7 +57,7 @@
         "dynamics": ["formation", "evolution", "retrieval"],
         "tags": ["generator-free", "provenance", "bitemporal"]
       },
-      "status": "implemented",
+      "status": "validated",
       "implementation": {
         "type": "reference",
         "fidelity": "conceptual",
@@ -71,8 +71,8 @@
         "verification_status": "not-applicable"
       },
       "benchmarks": [
-        {"id": "internal/factual-lifecycle", "role": "planned", "status": "not-run"},
-        {"id": "longmemeval-v1", "role": "planned", "status": "not-run"}
+        {"id": "internal/factual-lifecycle", "role": "full", "status": "passed"},
+        {"id": "longmemeval-v1-retrieval", "role": "full", "status": "passed"}
       ]
     },
     {
@@ -91,7 +91,7 @@
         "dynamics": ["formation", "evolution", "retrieval"],
         "tags": ["generator-free", "episodes", "lessons"]
       },
-      "status": "implemented",
+      "status": "validated",
       "implementation": {
         "type": "reference",
         "fidelity": "conceptual",
@@ -105,7 +105,7 @@
         "verification_status": "not-applicable"
       },
       "benchmarks": [
-        {"id": "internal/experiential-outcomes", "role": "planned", "status": "not-run"}
+        {"id": "internal/experiential-outcomes", "role": "full", "status": "passed"}
       ]
     },
     {
@@ -124,7 +124,7 @@
         "dynamics": ["formation", "evolution", "retrieval"],
         "tags": ["generator-free", "task-scoped", "compaction"]
       },
-      "status": "implemented",
+      "status": "validated",
       "implementation": {
         "type": "reference",
         "fidelity": "conceptual",
@@ -138,7 +138,153 @@
         "verification_status": "not-applicable"
       },
       "benchmarks": [
-        {"id": "internal/working-goal-compaction", "role": "planned", "status": "not-run"}
+        {"id": "internal/working-goal-compaction", "role": "full", "status": "passed"}
+      ]
+    },
+    {
+      "id": "dataset/longmemeval-v1-cleaned",
+      "title": "LongMemEval cleaned v1 dataset",
+      "artifact_type": "dataset",
+      "version": {
+        "label": "98d7416c24c7",
+        "published_at": null,
+        "identifier": "xiaowu0162/longmemeval-cleaned",
+        "url": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned"
+      },
+      "taxonomy": {
+        "forms": ["token-flat"],
+        "functions": ["factual"],
+        "dynamics": ["formation", "retrieval"],
+        "tags": ["benchmark", "long-context", "question-answering"]
+      },
+      "status": "validated",
+      "implementation": {
+        "type": "source-only",
+        "fidelity": "protocol-compatible",
+        "path": null,
+        "limitations": [
+          "The external dataset is not distributed by MemXplore.",
+          "Release validation uses session-level retrieval and a bounded local answer subset, not the official model-judged score."
+        ]
+      },
+      "upstream": {
+        "repository": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned",
+        "commit": "98d7416c24c778c2fee6e6f3006e7a073259d48f",
+        "license": "MIT",
+        "verification_status": "verified"
+      },
+      "benchmarks": [
+        {"id": "longmemeval-v1-retrieval", "role": "full", "status": "passed"},
+        {"id": "longmemeval-v1-local-answer", "role": "ablation", "status": "partial"}
+      ]
+    },
+    {
+      "id": "memxplore/longmemeval-v1-adapter",
+      "title": "MemXplore LongMemEval v1 session adapter",
+      "artifact_type": "benchmark",
+      "version": {
+        "label": "v1.0.0",
+        "published_at": "2026-08-08",
+        "identifier": null,
+        "url": null
+      },
+      "taxonomy": {
+        "forms": ["token-flat"],
+        "functions": ["factual"],
+        "dynamics": ["formation", "retrieval"],
+        "tags": ["adapter", "benchmark", "generator-free", "local-generation"]
+      },
+      "status": "validated",
+      "implementation": {
+        "type": "adapter",
+        "fidelity": "protocol-compatible",
+        "path": "internal/evaluation/longmemeval_v1.go",
+        "limitations": [
+          "The full run measures session retrieval, not official question-answering quality.",
+          "The local answer comparison is limited to two cases and uses deterministic exact match."
+        ]
+      },
+      "upstream": {
+        "repository": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned",
+        "commit": "98d7416c24c778c2fee6e6f3006e7a073259d48f",
+        "license": "MIT",
+        "verification_status": "verified"
+      },
+      "benchmarks": [
+        {"id": "longmemeval-v1-retrieval", "role": "full", "status": "passed"},
+        {"id": "longmemeval-v1-local-answer", "role": "ablation", "status": "partial"}
+      ]
+    },
+    {
+      "id": "dataset/longmemeval-v2",
+      "title": "LongMemEval v2 dataset",
+      "artifact_type": "dataset",
+      "version": {
+        "label": "f152293e2355",
+        "published_at": null,
+        "identifier": "xiaowu0162/longmemeval-v2",
+        "url": "https://huggingface.co/datasets/xiaowu0162/longmemeval-v2"
+      },
+      "taxonomy": {
+        "forms": ["token-flat"],
+        "functions": ["factual", "experiential", "working"],
+        "dynamics": ["formation", "retrieval"],
+        "tags": ["benchmark", "long-context", "multimodal", "question-answering"]
+      },
+      "status": "validated",
+      "implementation": {
+        "type": "source-only",
+        "fidelity": "protocol-compatible",
+        "path": null,
+        "limitations": [
+          "The external dataset and screenshots are not distributed by MemXplore.",
+          "v0.1 validates only bounded Small-tier metadata and trajectory materialization."
+        ]
+      },
+      "upstream": {
+        "repository": "https://huggingface.co/datasets/xiaowu0162/longmemeval-v2",
+        "commit": "f152293e235517d504809563c833d7190b8c713b",
+        "license": "Apache-2.0",
+        "verification_status": "verified"
+      },
+      "benchmarks": [
+        {"id": "longmemeval-v2-small-adapter-smoke", "role": "smoke", "status": "passed"}
+      ]
+    },
+    {
+      "id": "memxplore/longmemeval-v2-small-adapter",
+      "title": "MemXplore LongMemEval v2 Small adapter",
+      "artifact_type": "benchmark",
+      "version": {
+        "label": "v1.0.0",
+        "published_at": "2026-08-08",
+        "identifier": null,
+        "url": null
+      },
+      "taxonomy": {
+        "forms": ["token-flat"],
+        "functions": ["factual", "experiential", "working"],
+        "dynamics": ["formation", "retrieval"],
+        "tags": ["adapter", "benchmark", "long-context", "multimodal"]
+      },
+      "status": "validated",
+      "implementation": {
+        "type": "adapter",
+        "fidelity": "protocol-compatible",
+        "path": "internal/evaluation/longmemeval_v2.go",
+        "limitations": [
+          "The v0.1 smoke test covers only the first ten Small-tier questions.",
+          "Integrity Recall@100 and MRR are not retrieval or question-answering quality scores."
+        ]
+      },
+      "upstream": {
+        "repository": "https://huggingface.co/datasets/xiaowu0162/longmemeval-v2",
+        "commit": "f152293e235517d504809563c833d7190b8c713b",
+        "license": "Apache-2.0",
+        "verification_status": "verified"
+      },
+      "benchmarks": [
+        {"id": "longmemeval-v2-small-adapter-smoke", "role": "smoke", "status": "passed"}
       ]
     }
   ]

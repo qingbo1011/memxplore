@@ -6,6 +6,7 @@
   "additionalProperties": false,
   "required": ["schema_version", "snapshot", "entries"],
   "properties": {
+    "$schema": {"const": "./catalog.schema.json"},
     "schema_version": {"const": 1},
     "snapshot": {
       "type": "object",
@@ -93,4 +94,3 @@
     }
   }
 }
-

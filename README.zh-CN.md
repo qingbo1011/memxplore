@@ -62,6 +62,12 @@ go run ./cmd/memxplore recall \
 
 Loopback HTTP 默认可免 token。绑定非 loopback 地址前，必须先用 `memxplore token create` 创建 scoped token；daemon 只保存 SHA-256 摘要。Ollama 必须显式启用，MemXplore 不会自动下载模型。详见 [API、CLI、MCP、SDK 与 AgentEvent 使用说明](docs/api.zh-CN.md)和 [Provider 配置](docs/providers.md)。
 
+## 评测证据
+
+v0.1.0 release gate 包含确定性生命周期场景、完整 500-case LongMemEval v1 session retrieval、有界 LongMemEval-V2 Small adapter smoke，以及 2-case 本机 Ollama 答案对照。完整 v1 lexical run 的 Recall@5 为 0.9197，MRR 为 0.9244，失败数为 0。这是 session-retrieval 结果，不是官方 model-judged 问答分数。
+
+每个 run 都会写入不可变 manifest、prediction、metric、可重放 trace、artifact hash 和独立 HTML 报告。详见[评测命令、精确数据集版本、结果与限制](docs/evaluation.zh-CN.md)。
+
 ## 研究诚信
 
 - 每个策略都明确标注为 `baseline`、`reference`、`adapter`、`experimental` 或 `reproduction`。
@@ -85,6 +91,7 @@ Loopback HTTP 默认可免 token。绑定非 loopback 地址前，必须先用 `
 - [检索契约](docs/retrieval.md)
 - [记忆生命周期](docs/lifecycle.md)
 - [API、CLI、MCP、SDK 与 AgentEvent](docs/api.zh-CN.md)
+- [评测证据](docs/evaluation.zh-CN.md)
 - [路线图](docs/ROADMAP.md)
 - [贡献指南](CONTRIBUTING.md)
 - [第三方声明](THIRD_PARTY_NOTICES.md)

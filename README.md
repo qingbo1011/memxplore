@@ -62,6 +62,12 @@ go run ./cmd/memxplore recall \
 
 Loopback HTTP is tokenless by default. Before binding a non-loopback address, create a scoped token with `memxplore token create`; the daemon stores only its SHA-256 digest. Ollama is opt-in and never auto-pulls models. See [API, CLI, MCP, SDK, and AgentEvent usage](docs/api.md) and [provider configuration](docs/providers.md).
 
+## Evaluation evidence
+
+The v0.1.0 release gates include deterministic lifecycle scenarios, a full 500-case LongMemEval v1 session-retrieval run, a bounded LongMemEval-V2 Small adapter smoke, and a two-case local Ollama answer comparison. The full v1 lexical run reached Recall@5 0.9197 and MRR 0.9244 with zero failures. These are session-retrieval results, not the official model-judged question-answering score.
+
+Every run writes an immutable manifest, predictions, metrics, replayable traces, artifact hashes, and a standalone HTML report. See [evaluation commands, exact dataset pins, results, and limitations](docs/evaluation.md).
+
 ## Research integrity
 
 - Every strategy is labeled `baseline`, `reference`, `adapter`, `experimental`, or `reproduction`.
@@ -85,6 +91,7 @@ Security issues should be reported according to [SECURITY.md](SECURITY.md).
 - [Retrieval contract](docs/retrieval.md)
 - [Memory lifecycle](docs/lifecycle.md)
 - [API, CLI, MCP, SDK, and AgentEvent](docs/api.md)
+- [Evaluation evidence](docs/evaluation.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Contributing](CONTRIBUTING.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)

@@ -34,11 +34,11 @@ jq -e \
     and .local_e2e.assertions.sqlite_backup_restore
     and .local_e2e.assertions.security_gates
     and (.evaluation | length) == 4
-    and ([.evaluation[].manifest.run_id] | sort) == [
-      "ci-internal-lifecycle",
-      "longmemeval-v1-full-20260808-r2",
-      "longmemeval-v1-local-answer-20260808-r2",
-      "longmemeval-v2-small-smoke-20260808"
+    and ([.evaluation[].manifest.benchmark] | sort) == [
+      "internal-lifecycle-v1",
+      "longmemeval-v1-local-answer",
+      "longmemeval-v1-retrieval",
+      "longmemeval-v2-small-adapter-smoke"
     ]
 ' "$EVIDENCE/evidence-manifest.json" >/dev/null
 

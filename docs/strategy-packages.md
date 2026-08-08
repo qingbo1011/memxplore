@@ -35,3 +35,5 @@ Each token-flat functional class has two proposal-only formation packages:
 | working | creates task-scoped state, requiring a context/task ID | compacts a goal and current task state |
 
 Both modes emit a typed `Proposal`; neither can mutate storage. Assisted content is decoded with unknown-field rejection and then validated by the domain model. The apply policy remains responsible for authorization, evidence checks, conflict handling, and persistence.
+
+The same six-package matrix exists for evolution. Generator-free factual evolution supports no-op detection, correction, supersession, and explicit conflict formation; experiential evolution adds episode/outcome-backed evidence; working evolution compacts only within the matching task. Assisted variants return the same closed typed payload and can choose only `supersede` or `conflict`.

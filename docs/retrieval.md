@@ -15,7 +15,7 @@ SQLite applies the following filters before returning content or vectors:
 
 1. exact namespace and subject;
 2. authorized private owners and explicit shared/public grants;
-3. active memory plus current immutable version;
+3. active memory plus the immutable version visible at the requested system time (current or superseded history);
 4. valid-time and system-time half-open intervals;
 5. requested functional classes;
 6. task context for working memory. With no matching context, working memory is excluded.

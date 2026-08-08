@@ -21,6 +21,6 @@ Backups and restores use SQLite's online backup API, not filesystem copies of a 
 
 ## Purge
 
-Purge is an explicit irreversible content operation. It removes memory versions, derived dependency edges, artifact references, and FTS entries, then checkpoints and truncates the WAL. Only a non-content receipt remains. Archive, decay, and forget do not invoke purge.
+Purge is an explicit irreversible content operation. Its privacy-safe default recursively removes the target and every transitively derived memory, including versions, dependency edges, embeddings, feedback, artifact references, and FTS entries, then checkpoints and truncates the WAL. Only one aggregate non-content receipt remains. A separate `mark-stale` research mode removes only the target and excludes descendants until they are rebuilt. Archive and forget do not invoke purge; forget removes active indexes while retaining version content for an eventual explicit purge.
 
 Automated tests exercise FTS5, BM25, WAL, foreign keys, busy timeout, migration backup, concurrent writers, backup/restore, and purge residual checks.

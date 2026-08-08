@@ -46,8 +46,8 @@
       "title": "MemXplore factual rule reference",
       "artifact_type": "strategy",
       "version": {
-        "label": "v1-planned",
-        "published_at": null,
+        "label": "v1.0.0",
+        "published_at": "2026-08-08",
         "identifier": null,
         "url": null
       },
@@ -57,11 +57,11 @@
         "dynamics": ["formation", "evolution", "retrieval"],
         "tags": ["generator-free", "provenance", "bitemporal"]
       },
-      "status": "planned",
+      "status": "implemented",
       "implementation": {
         "type": "reference",
         "fidelity": "conceptual",
-        "path": null,
+        "path": "internal/strategy",
         "limitations": ["No paper reproduction claim."]
       },
       "upstream": {
@@ -80,8 +80,8 @@
       "title": "MemXplore experiential rule reference",
       "artifact_type": "strategy",
       "version": {
-        "label": "v1-planned",
-        "published_at": null,
+        "label": "v1.0.0",
+        "published_at": "2026-08-08",
         "identifier": null,
         "url": null
       },
@@ -91,11 +91,11 @@
         "dynamics": ["formation", "evolution", "retrieval"],
         "tags": ["generator-free", "episodes", "lessons"]
       },
-      "status": "planned",
+      "status": "implemented",
       "implementation": {
         "type": "reference",
         "fidelity": "conceptual",
-        "path": null,
+        "path": "internal/strategy",
         "limitations": ["No paper reproduction claim."]
       },
       "upstream": {
@@ -113,8 +113,8 @@
       "title": "MemXplore working-set rule reference",
       "artifact_type": "strategy",
       "version": {
-        "label": "v1-planned",
-        "published_at": null,
+        "label": "v1.0.0",
+        "published_at": "2026-08-08",
         "identifier": null,
         "url": null
       },
@@ -124,11 +124,11 @@
         "dynamics": ["formation", "evolution", "retrieval"],
         "tags": ["generator-free", "task-scoped", "compaction"]
       },
-      "status": "planned",
+      "status": "implemented",
       "implementation": {
         "type": "reference",
         "fidelity": "conceptual",
-        "path": null,
+        "path": "internal/strategy",
         "limitations": ["No paper reproduction claim."]
       },
       "upstream": {
@@ -143,4 +143,3 @@
     }
   ]
 }
-

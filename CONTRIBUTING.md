@@ -4,7 +4,7 @@ MemXplore accepts focused changes that improve research coverage, correctness, r
 
 ## Development
 
-Go 1.24 or newer is required.
+Go 1.26 or newer is required.
 
 ```sh
 make check
@@ -24,4 +24,3 @@ Do not commit model weights, large datasets, secrets, third-party run directorie
 - Keep each verified logical increment in its own commit.
 - Do not rewrite pushed `main` history or force-push it.
 - Run the relevant unit, integration, contract, security, or benchmark checks before pushing.
-

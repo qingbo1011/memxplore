@@ -40,7 +40,7 @@ The single `memxplore serve` daemon owns SQLite, durable jobs, provider calls, a
 
 ## Current development entry point
 
-Go 1.24 or newer is required.
+Go 1.26 or newer is required.
 
 ```sh
 go test ./...
@@ -74,4 +74,3 @@ Security issues should be reported according to [SECURITY.md](SECURITY.md).
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).
-

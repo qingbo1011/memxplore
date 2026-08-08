@@ -40,7 +40,7 @@ CLI / REST / MCP / Go SDK / AgentEvent adapters
 
 ## 当前开发入口
 
-需要 Go 1.24 或更高版本。
+需要 Go 1.26 或更高版本。
 
 ```sh
 go test ./...
@@ -74,4 +74,3 @@ go run ./cmd/memxplore version --json
 ## License
 
 Apache License 2.0，详见 [LICENSE](LICENSE)。
-

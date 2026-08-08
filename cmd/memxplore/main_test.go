@@ -199,3 +199,20 @@ func TestProviderURLIsLoopback(t *testing.T) {
 		}
 	}
 }
+
+func TestOllamaNativeURL(t *testing.T) {
+	for input, want := range map[string]string{
+		"http://127.0.0.1:11434/v1":         "http://127.0.0.1:11434",
+		"http://localhost:11434/prefix/v1/": "http://localhost:11434/prefix",
+	} {
+		got, err := ollamaNativeURL(input)
+		if err != nil || got != want {
+			t.Fatalf("ollamaNativeURL(%q)=%q, %v, want %q", input, got, err, want)
+		}
+	}
+	for _, input := range []string{"", "http://127.0.0.1:11434", "file:///v1"} {
+		if _, err := ollamaNativeURL(input); err == nil {
+			t.Fatalf("ollamaNativeURL(%q) succeeded", input)
+		}
+	}
+}

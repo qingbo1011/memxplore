@@ -201,7 +201,16 @@ func buildRuntime(ctx context.Context, config runtimeFlags, allowLoopbackWithout
 		workerConfig.EmbeddingDimensions = config.embeddingDimensions
 	}
 	if config.enableAssisted {
-		workerConfig.Generator = provider
+		nativeURL, err := ollamaNativeURL(config.ollamaURL)
+		if err != nil {
+			return nil, err
+		}
+		disableThinking := false
+		generator, err := ollamaprovider.New(ollamaprovider.Config{BaseURL: nativeURL, Think: &disableThinking})
+		if err != nil {
+			return nil, err
+		}
+		workerConfig.Generator = generator
 		workerConfig.GeneratorProvider = "ollama"
 		workerConfig.GeneratorModel = config.generatorModel
 	}
@@ -227,6 +236,22 @@ func buildRuntime(ctx context.Context, config runtimeFlags, allowLoopbackWithout
 	}
 	failed = false
 	return &localRuntime{store: store, worker: worker, api: server, telemetry: telemetryRuntime}, nil
+}
+
+func ollamaNativeURL(openAIURL string) (string, error) {
+	parsed, err := url.Parse(openAIURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("valid Ollama OpenAI-compatible URL is required")
+	}
+	path := strings.TrimRight(parsed.Path, "/")
+	if !strings.HasSuffix(path, "/v1") {
+		return "", fmt.Errorf("Ollama URL path must end in /v1")
+	}
+	parsed.Path = strings.TrimSuffix(path, "/v1")
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return strings.TrimRight(parsed.String(), "/"), nil
 }
 
 func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {

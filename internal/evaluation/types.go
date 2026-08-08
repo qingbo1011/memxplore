@@ -2,6 +2,7 @@
 package evaluation
 
 import (
+	"encoding/json"
 	"fmt"
 	"runtime"
 	"sort"
@@ -99,12 +100,13 @@ type Failure struct {
 
 // TraceReference points to a replayable lifecycle or retrieval trace.
 type TraceReference struct {
-	ID       string `json:"id"`
-	CaseID   string `json:"case_id"`
-	Variant  string `json:"variant"`
-	Kind     string `json:"kind"`
-	Location string `json:"location"`
-	SHA256   string `json:"sha256,omitempty"`
+	ID       string          `json:"id"`
+	CaseID   string          `json:"case_id"`
+	Variant  string          `json:"variant"`
+	Kind     string          `json:"kind"`
+	Location string          `json:"location"`
+	SHA256   string          `json:"sha256,omitempty"`
+	Payload  json.RawMessage `json:"payload"`
 }
 
 // VariantMetrics contains quality and system measurements for one arm.
@@ -198,6 +200,23 @@ func (r Run) Validate() error {
 	for variant := range variantIDs {
 		if _, ok := r.Metrics.Variants[variant]; !ok {
 			return fmt.Errorf("metrics missing variant %q", variant)
+		}
+	}
+	traceIDs := make(map[string]struct{}, len(r.Traces))
+	for _, reference := range r.Traces {
+		if _, duplicate := traceIDs[reference.ID]; duplicate {
+			return fmt.Errorf("duplicate trace reference %q", reference.ID)
+		}
+		if _, err := ReplayTrace(reference); err != nil {
+			return err
+		}
+		traceIDs[reference.ID] = struct{}{}
+	}
+	for _, prediction := range r.Predictions {
+		for _, traceID := range prediction.TraceIDs {
+			if _, ok := traceIDs[traceID]; !ok {
+				return fmt.Errorf("prediction %q references missing trace %q", prediction.CaseID, traceID)
+			}
 		}
 	}
 	return nil

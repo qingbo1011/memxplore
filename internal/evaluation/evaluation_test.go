@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/qingbo1011/memxplore/internal/domain"
 )
 
 func sampleRun() Run {
@@ -25,7 +27,14 @@ func sampleRun() Run {
 	manifest.TopK = 5
 	manifest.CompletedAt = now.Add(time.Second)
 	manifest.Limitations = []string{"deterministic fixture"}
-	return Run{Manifest: manifest, Predictions: predictions, Metrics: metrics, Traces: []TraceReference{{ID: "trace-a", CaseID: "case-a", Variant: "lexical", Kind: "retrieval", Location: "sqlite:retrieval_traces/trace-a"}}}
+	trace := domain.RetrievalTrace{
+		ID: "trace-a", Scope: domain.Scope{Namespace: "eval", Owner: "eval-owner", Subject: "subject-a", Actor: "eval-actor", Visibility: domain.VisibilityPrivate},
+		Query: "where", StrategyID: "retrieval.lexical@1.0.0", StrategyHash: strings.Repeat("b", 64),
+		Authorization: domain.RetrievalAuthorization{PrincipalID: "eval-actor", PrivateOwners: []domain.ID{"eval-owner"}},
+		ValidAt:       now, SystemAt: now, TokenBudget: 10, StartedAt: now, CompletedAt: now,
+	}
+	reference, _ := NewTraceReference("case-a", "lexical", "retrieval", trace)
+	return Run{Manifest: manifest, Predictions: predictions, Metrics: metrics, Traces: []TraceReference{reference}}
 }
 
 func TestScoreProducesRetrievalSystemAndAblationMetrics(t *testing.T) {

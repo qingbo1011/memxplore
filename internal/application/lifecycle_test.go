@@ -22,11 +22,11 @@ func (p policyStub) Evaluate(context.Context, domain.Scope, Proposal) (PolicyDec
 
 type lifecycleStub struct{ calls int }
 
-func (r *lifecycleStub) ApplyProposal(_ context.Context, proposal Proposal, actor domain.ID, at time.Time) (domain.Memory, domain.MemoryVersion, domain.Operation, error) {
+func (r *lifecycleStub) ApplyProposalAuthorized(_ context.Context, proposal Proposal, scope domain.Scope, at time.Time) (domain.Memory, domain.MemoryVersion, domain.Operation, error) {
 	r.calls++
 	memory := domain.Memory{ID: proposal.TargetID}
 	operation := domain.Operation{
-		ID: "op-test", Phase: domain.PhaseApply, Kind: string(proposal.Kind), Actor: actor,
+		ID: "op-test", Phase: domain.PhaseApply, Kind: string(proposal.Kind), Actor: scope.Actor,
 		TargetID: memory.ID, ProposalID: proposal.ID, OccurredAt: at, Result: "applied",
 	}
 	return memory, domain.MemoryVersion{}, operation, nil

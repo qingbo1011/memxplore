@@ -58,7 +58,7 @@ type AppliedMutation struct {
 
 // LifecycleRepository is the policy-gated persistence port.
 type LifecycleRepository interface {
-	ApplyProposal(context.Context, Proposal, domain.ID, time.Time) (domain.Memory, domain.MemoryVersion, domain.Operation, error)
+	ApplyProposalAuthorized(context.Context, Proposal, domain.Scope, time.Time) (domain.Memory, domain.MemoryVersion, domain.Operation, error)
 }
 
 // LifecycleService is the sole application boundary that applies model or rule proposals.
@@ -96,7 +96,7 @@ func (s *LifecycleService) Apply(ctx context.Context, scope domain.Scope, propos
 	if !decision.Allow {
 		return AppliedMutation{Decision: decision}, fmt.Errorf("%w: %s", ErrPolicyDenied, decision.ReasonCode)
 	}
-	memory, version, operation, err := s.repository.ApplyProposal(ctx, proposal, scope.Actor, at.UTC())
+	memory, version, operation, err := s.repository.ApplyProposalAuthorized(ctx, proposal, scope, at.UTC())
 	if err != nil {
 		return AppliedMutation{Decision: decision}, fmt.Errorf("apply lifecycle proposal: %w", err)
 	}

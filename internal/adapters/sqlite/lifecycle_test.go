@@ -10,6 +10,7 @@ import (
 
 	"github.com/qingbo1011/memxplore/internal/application"
 	"github.com/qingbo1011/memxplore/internal/domain"
+	"github.com/qingbo1011/memxplore/internal/policy"
 )
 
 func proposal(id string, kind application.ProposalKind, target domain.ID, payload any, createdAt time.Time) application.Proposal {
@@ -224,5 +225,40 @@ func TestPurgeCascadesDerivedMemoriesOrMarksThemStaleExplicitly(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestAuthorizedApplyBlocksOwnerBypassAndPrivateDisclosure(t *testing.T) {
+	ctx := context.Background()
+	store := testStore(t)
+	service, err := application.NewLifecycleService(policy.OwnerPolicy{}, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	ownerScope := testObservation("obs-owner", "private source").Scope
+	parentProposal := proposal("proposal-private-parent", application.ProposalCreate, "", factualCreate("private source", base, nil), base)
+	parent, err := service.Apply(ctx, ownerScope, parentProposal, base.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	attackerScope := ownerScope
+	attackerScope.Owner = "owner-bob"
+	attackerScope.Subject = "subject-bob"
+	attackerScope.Actor = "actor-bob"
+	bypass := proposal("proposal-owner-bypass", application.ProposalUpdate, parent.Memory.ID,
+		factualEvolution("stolen update", application.EvolutionSupersede, base.Add(2*time.Minute), nil), base.Add(2*time.Minute))
+	if _, err := service.Apply(ctx, attackerScope, bypass, base.Add(3*time.Minute)); err == nil || !strings.Contains(err.Error(), "does not own evolution target") {
+		t.Fatalf("owner bypass err=%v", err)
+	}
+
+	sharedCreate := factualCreate("shared derivative", base.Add(4*time.Minute), []domain.ID{parent.Version.ID})
+	sharedCreate.Scope.Visibility = domain.VisibilityShared
+	sharedProposal := proposal("proposal-private-to-shared", application.ProposalCreate, "", sharedCreate, base.Add(4*time.Minute))
+	sharedScope := ownerScope
+	sharedScope.Visibility = domain.VisibilityShared
+	if _, err := service.Apply(ctx, sharedScope, sharedProposal, base.Add(5*time.Minute)); err == nil || !strings.Contains(err.Error(), "cannot flow") {
+		t.Fatalf("private-to-shared disclosure err=%v", err)
 	}
 }

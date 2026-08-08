@@ -18,6 +18,18 @@ import (
 
 // ApplyProposal atomically mutates lifecycle state and records the apply operation.
 func (s *Store) ApplyProposal(ctx context.Context, proposal application.Proposal, actor domain.ID, at time.Time) (domain.Memory, domain.MemoryVersion, domain.Operation, error) {
+	return s.applyProposal(ctx, proposal, nil, actor, at)
+}
+
+// ApplyProposalAuthorized enforces the application-authorized scope inside the mutation transaction.
+func (s *Store) ApplyProposalAuthorized(ctx context.Context, proposal application.Proposal, scope domain.Scope, at time.Time) (domain.Memory, domain.MemoryVersion, domain.Operation, error) {
+	if err := scope.Validate(); err != nil {
+		return domain.Memory{}, domain.MemoryVersion{}, domain.Operation{}, err
+	}
+	return s.applyProposal(ctx, proposal, &scope, scope.Actor, at)
+}
+
+func (s *Store) applyProposal(ctx context.Context, proposal application.Proposal, authorized *domain.Scope, actor domain.ID, at time.Time) (domain.Memory, domain.MemoryVersion, domain.Operation, error) {
 	if err := proposal.Validate(); err != nil {
 		return domain.Memory{}, domain.MemoryVersion{}, domain.Operation{}, err
 	}
@@ -32,6 +44,9 @@ func (s *Store) ApplyProposal(ctx context.Context, proposal application.Proposal
 	if memory, version, operation, found, err := loadAppliedProposal(ctx, tx, proposal.ID); err != nil {
 		return domain.Memory{}, domain.MemoryVersion{}, domain.Operation{}, err
 	} else if found {
+		if authorized != nil && !scopeAuthorizesMemory(*authorized, memory.Scope) {
+			return domain.Memory{}, domain.MemoryVersion{}, domain.Operation{}, fmt.Errorf("authorized scope does not own replayed proposal target")
+		}
 		return memory, version, operation, nil
 	}
 
@@ -39,13 +54,13 @@ func (s *Store) ApplyProposal(ctx context.Context, proposal application.Proposal
 	var version domain.MemoryVersion
 	switch proposal.Kind {
 	case application.ProposalCreate:
-		memory, version, err = applyCreate(ctx, tx, proposal, at)
+		memory, version, err = applyCreate(ctx, tx, proposal, authorized, at)
 	case application.ProposalUpdate, application.ProposalConsolidate:
-		memory, version, err = applyEvolution(ctx, tx, proposal, at)
+		memory, version, err = applyEvolution(ctx, tx, proposal, authorized, at)
 	case application.ProposalArchive:
-		memory, version, err = applyState(ctx, tx, proposal, domain.MemoryArchived, domain.VersionArchived, false)
+		memory, version, err = applyState(ctx, tx, proposal, authorized, domain.MemoryArchived, domain.VersionArchived, false)
 	case application.ProposalForget:
-		memory, version, err = applyState(ctx, tx, proposal, domain.MemoryForgotten, domain.VersionForgotten, true)
+		memory, version, err = applyState(ctx, tx, proposal, authorized, domain.MemoryForgotten, domain.VersionForgotten, true)
 	default:
 		err = fmt.Errorf("proposal kind %q is not applicable", proposal.Kind)
 	}
@@ -66,7 +81,7 @@ func (s *Store) ApplyProposal(ctx context.Context, proposal application.Proposal
 	return memory, version, operation, nil
 }
 
-func applyCreate(ctx context.Context, tx *sql.Tx, proposal application.Proposal, at time.Time) (domain.Memory, domain.MemoryVersion, error) {
+func applyCreate(ctx context.Context, tx *sql.Tx, proposal application.Proposal, authorized *domain.Scope, at time.Time) (domain.Memory, domain.MemoryVersion, error) {
 	var create application.MemoryCreate
 	if err := decodeStrict(proposal.Payload, &create); err != nil {
 		return domain.Memory{}, domain.MemoryVersion{}, fmt.Errorf("decode create proposal: %w", err)
@@ -76,6 +91,9 @@ func applyCreate(ctx context.Context, tx *sql.Tx, proposal application.Proposal,
 	}
 	if create.Scope.Namespace != proposal.Namespace {
 		return domain.Memory{}, domain.MemoryVersion{}, fmt.Errorf("create proposal namespace mismatch")
+	}
+	if authorized != nil && !scopeAuthorizesCreate(*authorized, create.Scope) {
+		return domain.Memory{}, domain.MemoryVersion{}, fmt.Errorf("authorized scope does not own create proposal")
 	}
 	validTime := domain.TimeRange{From: proposal.CreatedAt.UTC()}
 	if create.ValidTime != nil {
@@ -91,7 +109,7 @@ func applyCreate(ctx context.Context, tx *sql.Tx, proposal application.Proposal,
 		ConflictGroup: create.ConflictGroup, DerivedFrom: append([]domain.ID(nil), create.DerivedFrom...),
 		Provenance: append([]domain.EvidenceRef(nil), create.Provenance...), Payload: create.Payload,
 	}
-	if err := validateDependencies(ctx, tx, proposal.Namespace, "", version.DerivedFrom); err != nil {
+	if err := validateDependencies(ctx, tx, create.Scope, "", version.DerivedFrom); err != nil {
 		return domain.Memory{}, domain.MemoryVersion{}, err
 	}
 	if err := validatePayloadReferences(ctx, tx, proposal.Namespace, memory.Scope.Context, at, version.Payload); err != nil {
@@ -103,13 +121,16 @@ func applyCreate(ctx context.Context, tx *sql.Tx, proposal application.Proposal,
 	return memory, version, nil
 }
 
-func applyEvolution(ctx context.Context, tx *sql.Tx, proposal application.Proposal, at time.Time) (domain.Memory, domain.MemoryVersion, error) {
+func applyEvolution(ctx context.Context, tx *sql.Tx, proposal application.Proposal, authorized *domain.Scope, at time.Time) (domain.Memory, domain.MemoryVersion, error) {
 	memory, current, err := loadCurrentMemory(ctx, tx, proposal.TargetID)
 	if err != nil {
 		return domain.Memory{}, domain.MemoryVersion{}, err
 	}
 	if memory.Scope.Namespace != proposal.Namespace {
 		return domain.Memory{}, domain.MemoryVersion{}, fmt.Errorf("evolution proposal namespace mismatch")
+	}
+	if authorized != nil && !scopeAuthorizesMemory(*authorized, memory.Scope) {
+		return domain.Memory{}, domain.MemoryVersion{}, fmt.Errorf("authorized scope does not own evolution target")
 	}
 	if memory.State != domain.MemoryActive {
 		return domain.Memory{}, domain.MemoryVersion{}, fmt.Errorf("only active memory can evolve")
@@ -124,7 +145,7 @@ func applyEvolution(ctx context.Context, tx *sql.Tx, proposal application.Propos
 	if proposal.Kind == application.ProposalConsolidate && evolution.Mode != application.EvolutionRebuild {
 		return domain.Memory{}, domain.MemoryVersion{}, fmt.Errorf("consolidation proposal requires rebuild mode")
 	}
-	if err := validateDependencies(ctx, tx, proposal.Namespace, current.ID, evolution.DerivedFrom); err != nil {
+	if err := validateDependencies(ctx, tx, memory.Scope, current.ID, evolution.DerivedFrom); err != nil {
 		return domain.Memory{}, domain.MemoryVersion{}, err
 	}
 	if err := validatePayloadReferences(ctx, tx, proposal.Namespace, memory.Scope.Context, at, evolution.Payload); err != nil {
@@ -203,7 +224,7 @@ func applyConflict(ctx context.Context, tx *sql.Tx, proposal application.Proposa
 	return sibling, version, nil
 }
 
-func applyState(ctx context.Context, tx *sql.Tx, proposal application.Proposal, memoryState domain.MemoryState, versionState domain.VersionState, removeIndexes bool) (domain.Memory, domain.MemoryVersion, error) {
+func applyState(ctx context.Context, tx *sql.Tx, proposal application.Proposal, authorized *domain.Scope, memoryState domain.MemoryState, versionState domain.VersionState, removeIndexes bool) (domain.Memory, domain.MemoryVersion, error) {
 	if !bytes.Equal(bytes.TrimSpace(proposal.Payload), []byte("{}")) {
 		return domain.Memory{}, domain.MemoryVersion{}, fmt.Errorf("state proposal payload must be an empty JSON object")
 	}
@@ -217,6 +238,9 @@ func applyState(ctx context.Context, tx *sql.Tx, proposal application.Proposal, 
 	}
 	if memory.Scope.Namespace != proposal.Namespace {
 		return domain.Memory{}, domain.MemoryVersion{}, fmt.Errorf("state proposal namespace mismatch")
+	}
+	if authorized != nil && !scopeAuthorizesMemory(*authorized, memory.Scope) {
+		return domain.Memory{}, domain.MemoryVersion{}, fmt.Errorf("authorized scope does not own state target")
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE memories SET state = ? WHERE id = ?", memoryState, memory.ID); err != nil {
 		return domain.Memory{}, domain.MemoryVersion{}, fmt.Errorf("update memory state: %w", err)
@@ -273,7 +297,7 @@ func insertVersionRows(ctx context.Context, executor contextExecutor, memory dom
 	return nil
 }
 
-func validateDependencies(ctx context.Context, tx *sql.Tx, namespace domain.ID, targetVersion domain.ID, parents []domain.ID) error {
+func validateDependencies(ctx context.Context, tx *sql.Tx, targetScope domain.Scope, targetVersion domain.ID, parents []domain.ID) error {
 	seen := make(map[domain.ID]struct{}, len(parents))
 	for _, parent := range parents {
 		if parent == "" {
@@ -283,15 +307,19 @@ func validateDependencies(ctx context.Context, tx *sql.Tx, namespace domain.ID, 
 			return fmt.Errorf("duplicate dependency parent %s", parent)
 		}
 		seen[parent] = struct{}{}
-		var parentNamespace domain.ID
+		var parentNamespace, parentOwner domain.ID
+		var parentVisibility domain.Visibility
 		if err := tx.QueryRowContext(ctx, `
-            SELECT m.namespace_id
-            FROM memory_versions v JOIN memories m ON m.id = v.memory_id
-            WHERE v.id = ?`, parent).Scan(&parentNamespace); err != nil {
+			SELECT m.namespace_id, m.owner_id, m.visibility
+			FROM memory_versions v JOIN memories m ON m.id = v.memory_id
+			WHERE v.id = ?`, parent).Scan(&parentNamespace, &parentOwner, &parentVisibility); err != nil {
 			return fmt.Errorf("load dependency parent %s: %w", parent, err)
 		}
-		if parentNamespace != namespace {
+		if parentNamespace != targetScope.Namespace {
 			return fmt.Errorf("dependency parent %s crosses namespace", parent)
+		}
+		if parentVisibility == domain.VisibilityPrivate && (parentOwner != targetScope.Owner || targetScope.Visibility != domain.VisibilityPrivate) {
+			return fmt.Errorf("private dependency parent %s cannot flow to another owner or visibility", parent)
 		}
 		if targetVersion != "" {
 			var cycle int
@@ -311,6 +339,14 @@ func validateDependencies(ctx context.Context, tx *sql.Tx, namespace domain.ID, 
 		}
 	}
 	return nil
+}
+
+func scopeAuthorizesCreate(authorized, target domain.Scope) bool {
+	return authorized.Namespace == target.Namespace && authorized.Owner == target.Owner && authorized.Subject == target.Subject && authorized.Actor == target.Actor
+}
+
+func scopeAuthorizesMemory(authorized, target domain.Scope) bool {
+	return authorized.Namespace == target.Namespace && authorized.Owner == target.Owner && authorized.Subject == target.Subject
 }
 
 func validatePayloadReferences(ctx context.Context, tx *sql.Tx, namespace, memoryContext domain.ID, at time.Time, payload domain.MemoryPayload) error {

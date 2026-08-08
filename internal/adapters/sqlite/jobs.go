@@ -24,9 +24,10 @@ func (s *Store) EnqueueObservation(ctx context.Context, observation domain.Obser
 	if job.Namespace != observation.Scope.Namespace {
 		return application.Job{}, false, fmt.Errorf("observation and job namespaces differ")
 	}
-	now := time.Now().UTC()
+	createdAt := time.Now().UTC()
+	availableAt := createdAt
 	if !job.AvailableAt.IsZero() {
-		now = job.AvailableAt.UTC()
+		availableAt = job.AvailableAt.UTC()
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -41,7 +42,7 @@ func (s *Store) EnqueueObservation(ctx context.Context, observation domain.Obser
         ) VALUES(?, ?, ?, 'queued', ?, ?, 0, ?, ?, ?)
         ON CONFLICT(namespace_id, kind, idempotency_key) DO NOTHING
         RETURNING id`, job.ID, job.Namespace, job.Kind, job.IdempotencyKey, string(job.Payload),
-		formatTime(now), formatTime(now), formatTime(now)).Scan(&insertedID)
+		formatTime(availableAt), formatTime(createdAt), formatTime(createdAt)).Scan(&insertedID)
 	if errors.Is(err, sql.ErrNoRows) {
 		_ = tx.Rollback()
 		existing, getErr := s.getByIdempotency(ctx, job.Namespace, job.Kind, job.IdempotencyKey)
@@ -53,7 +54,7 @@ func (s *Store) EnqueueObservation(ctx context.Context, observation domain.Obser
 	if err != nil {
 		return application.Job{}, false, fmt.Errorf("insert durable job: %w", err)
 	}
-	if err := insertObservation(ctx, tx, observation, now); err != nil {
+	if err := insertObservation(ctx, tx, observation, createdAt); err != nil {
 		return application.Job{}, false, err
 	}
 	if err := tx.Commit(); err != nil {

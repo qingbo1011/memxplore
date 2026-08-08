@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/qingbo1011/memxplore/internal/domain"
+	"github.com/qingbo1011/memxplore/internal/observability"
 	strategydef "github.com/qingbo1011/memxplore/internal/strategy"
 )
 
@@ -127,6 +128,7 @@ type RetrieverConfig struct {
 	EmbeddingDimensions int
 	RRFConstant         int
 	Now                 func() time.Time
+	Observability       observability.Recorder
 }
 
 // Retriever executes deterministic lexical, exact-cosine, and RRF hybrid recall.
@@ -139,6 +141,7 @@ type Retriever struct {
 	dimensions  int
 	rrfConstant int
 	now         func() time.Time
+	observer    observability.Recorder
 }
 
 // NewRetriever validates all configured retrieval capabilities.
@@ -162,11 +165,18 @@ func NewRetriever(config RetrieverConfig) (*Retriever, error) {
 		repository: config.Repository, traceSink: config.TraceSink, embedder: config.Embedder,
 		provider: config.EmbeddingProvider, model: config.EmbeddingModel,
 		dimensions: config.EmbeddingDimensions, rrfConstant: config.RRFConstant, now: config.Now,
+		observer: observability.OrNop(config.Observability),
 	}, nil
 }
 
 // Recall returns a token-budgeted bundle and persists the full candidate trace when configured.
-func (r *Retriever) Recall(ctx context.Context, request RecallRequest) (RecallBundle, error) {
+func (r *Retriever) Recall(ctx context.Context, request RecallRequest) (_ RecallBundle, finalErr error) {
+	requestedMode := string(request.Mode)
+	if requestedMode == "" {
+		requestedMode = string(RetrievalAuto)
+	}
+	ctx, endOperation := r.observer.Start(ctx, "memory.recall", observability.String("requested_mode", requestedMode))
+	defer func() { endOperation(finalErr) }()
 	if err := validateRecallRequest(request); err != nil {
 		return RecallBundle{}, err
 	}
@@ -263,6 +273,10 @@ func (r *Retriever) Recall(ctx context.Context, request RecallRequest) (RecallBu
 			return RecallBundle{}, fmt.Errorf("persist retrieval trace: %w", err)
 		}
 	}
+	metricAttrs := []observability.Attribute{observability.String("mode", string(mode))}
+	r.observer.Observe(ctx, observability.MetricRetrievalCandidates, float64(len(traceCandidates)), metricAttrs...)
+	r.observer.Observe(ctx, observability.MetricRetrievalSelected, float64(len(items)), metricAttrs...)
+	r.observer.Observe(ctx, observability.MetricRetrievalTokens, float64(tokensUsed), metricAttrs...)
 	return RecallBundle{
 		Query: request.Query, Mode: mode, FallbackReason: fallback,
 		Items: items, Groups: groups, Trace: trace,

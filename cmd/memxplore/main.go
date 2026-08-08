@@ -27,6 +27,8 @@ import (
 	"github.com/qingbo1011/memxplore/internal/daemon"
 	"github.com/qingbo1011/memxplore/internal/domain"
 	"github.com/qingbo1011/memxplore/internal/evaluation"
+	"github.com/qingbo1011/memxplore/internal/observability"
+	"github.com/qingbo1011/memxplore/internal/telemetry"
 	"github.com/qingbo1011/memxplore/sdk"
 )
 
@@ -119,6 +121,8 @@ type runtimeFlags struct {
 	generatorModel      string
 	enableAssisted      bool
 	enableAgentEvents   bool
+	otelEndpoint        string
+	otelServiceName     string
 }
 
 func addRuntimeFlags(flags *flag.FlagSet, config *runtimeFlags) {
@@ -132,23 +136,40 @@ func addRuntimeFlags(flags *flag.FlagSet, config *runtimeFlags) {
 	flags.StringVar(&config.generatorModel, "generator-model", defaultGeneratorModel, "configured generator model")
 	flags.BoolVar(&config.enableAssisted, "enable-assisted", false, "enable generator-assisted formation using the explicit Ollama URL")
 	flags.BoolVar(&config.enableAgentEvents, "enable-agent-events", false, "enable opt-in AgentEvent HTTP ingestion")
+	flags.StringVar(&config.otelEndpoint, "otel-endpoint", "", "explicit OTLP/HTTP collector base URL")
+	flags.StringVar(&config.otelServiceName, "otel-service-name", "memxplore", "OpenTelemetry service name")
 }
 
 type localRuntime struct {
-	store  *sqlite.Store
-	worker *daemon.FormationWorker
-	api    *api.Server
+	store     *sqlite.Store
+	worker    *daemon.FormationWorker
+	api       *api.Server
+	telemetry *telemetry.Runtime
+}
+
+func (r *localRuntime) Close() error {
+	shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return errors.Join(r.store.Close(), r.telemetry.Shutdown(shutdownContext))
 }
 
 func buildRuntime(ctx context.Context, config runtimeFlags, allowLoopbackWithoutToken bool) (*localRuntime, error) {
+	telemetryRuntime, err := telemetry.Setup(ctx, telemetry.Config{
+		Endpoint: config.otelEndpoint, ServiceName: config.otelServiceName, ServiceVersion: buildinfo.Version,
+	})
+	if err != nil {
+		return nil, err
+	}
 	store, err := sqlite.Open(ctx, config.db, sqlite.DefaultOptions())
 	if err != nil {
+		_ = telemetryRuntime.Shutdown(ctx)
 		return nil, err
 	}
 	failed := true
 	defer func() {
 		if failed {
 			_ = store.Close()
+			_ = telemetryRuntime.Shutdown(ctx)
 		}
 	}()
 	var provider *openaicompat.Client
@@ -161,8 +182,8 @@ func buildRuntime(ctx context.Context, config runtimeFlags, allowLoopbackWithout
 	if config.enableAssisted && provider == nil {
 		return nil, fmt.Errorf("--enable-assisted requires --ollama-url")
 	}
-	retrieverConfig := application.RetrieverConfig{Repository: store, TraceSink: store}
-	workerConfig := daemon.FormationConfig{Store: store}
+	retrieverConfig := application.RetrieverConfig{Repository: store, TraceSink: store, Observability: telemetryRuntime.Recorder}
+	workerConfig := daemon.FormationConfig{Store: store, Observability: telemetryRuntime.Recorder}
 	if provider != nil {
 		retrieverConfig.Embedder = provider
 		retrieverConfig.EmbeddingProvider = "ollama"
@@ -193,12 +214,13 @@ func buildRuntime(ctx context.Context, config runtimeFlags, allowLoopbackWithout
 	server, err := api.NewServer(api.Config{
 		Store: store, Retriever: retriever, Worker: worker, LoopbackPrincipal: principal,
 		AllowLoopbackWithoutToken: allowLoopbackWithoutToken, EnableAgentEvents: config.enableAgentEvents,
+		Observability: telemetryRuntime.Recorder,
 	})
 	if err != nil {
 		return nil, err
 	}
 	failed = false
-	return &localRuntime{store: store, worker: worker, api: server}, nil
+	return &localRuntime{store: store, worker: worker, api: server, telemetry: telemetryRuntime}, nil
 }
 
 func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -215,7 +237,7 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	if err != nil {
 		return cliError(stderr, err)
 	}
-	defer runtime.store.Close()
+	defer runtime.Close()
 	if !loopback {
 		count, countErr := runtime.store.APITokenCount(ctx, time.Now().UTC())
 		if countErr != nil {
@@ -265,7 +287,7 @@ func mcpCommand(ctx context.Context, args []string, stdin io.Reader, stdout, std
 	if err != nil {
 		return cliError(stderr, err)
 	}
-	defer runtime.store.Close()
+	defer runtime.Close()
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() { _ = runtime.worker.Run(workerCtx) }()
@@ -549,27 +571,28 @@ func benchmarkCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 		fmt.Fprintln(stderr, "usage: memxplore benchmark <internal|longmemeval-v1|longmemeval-v2-small> [options]")
 		return 2
 	}
-	var benchmarkRun evaluation.Run
-	var err error
+	var output, otelEndpoint, otelServiceName string
+	var runBenchmark func(observability.Recorder) (evaluation.Run, error)
 	switch args[0] {
 	case "internal":
 		flags := flag.NewFlagSet("benchmark internal", flag.ContinueOnError)
 		flags.SetOutput(stderr)
-		output := flags.String("output", "runs", "immutable run output root")
+		outputFlag := flags.String("output", "runs", "immutable run output root")
 		runID := flags.String("run-id", "", "optional unique run identifier")
 		seed := flags.Int64("seed", 1, "fixture seed recorded in the manifest")
 		workDir := flags.String("work-dir", "", "optional temporary SQLite parent directory")
+		addCommandTelemetryFlags(flags, &otelEndpoint, &otelServiceName)
 		if err := flags.Parse(args[1:]); err != nil {
 			return 2
 		}
-		benchmarkRun, err = evaluation.RunInternal(ctx, evaluation.InternalConfig{RunID: *runID, Seed: *seed, WorkDir: *workDir})
-		if err == nil {
-			return writeBenchmarkRun(*output, benchmarkRun, stdout, stderr)
+		output = *outputFlag
+		runBenchmark = func(recorder observability.Recorder) (evaluation.Run, error) {
+			return evaluation.RunInternal(ctx, evaluation.InternalConfig{RunID: *runID, Seed: *seed, WorkDir: *workDir, Observability: recorder})
 		}
 	case "longmemeval-v1":
 		flags := flag.NewFlagSet("benchmark longmemeval-v1", flag.ContinueOnError)
 		flags.SetOutput(stderr)
-		output := flags.String("output", "runs", "immutable run output root")
+		outputFlag := flags.String("output", "runs", "immutable run output root")
 		dataset := flags.String("dataset", "", "path to longmemeval_s_cleaned.json")
 		revision := flags.String("revision", "", "pinned upstream dataset revision")
 		runID := flags.String("run-id", "", "optional unique run identifier")
@@ -577,51 +600,73 @@ func benchmarkCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 		limit := flags.Int("limit", 0, "first N cases; 0 requires the full 500-case dataset")
 		topK := flags.Int("top-k", 5, "retrieval cutoff")
 		workDir := flags.String("work-dir", "", "optional temporary SQLite parent directory")
+		addCommandTelemetryFlags(flags, &otelEndpoint, &otelServiceName)
 		if err := flags.Parse(args[1:]); err != nil {
 			return 2
 		}
-		benchmarkRun, err = evaluation.RunLongMemEvalV1(ctx, evaluation.LongMemEvalV1Config{
-			DatasetPath: *dataset, Revision: *revision, RunID: *runID, Seed: *seed, Limit: *limit, TopK: *topK, WorkDir: *workDir,
-		})
-		if err == nil {
-			return writeBenchmarkRun(*output, benchmarkRun, stdout, stderr)
+		output = *outputFlag
+		runBenchmark = func(recorder observability.Recorder) (evaluation.Run, error) {
+			return evaluation.RunLongMemEvalV1(ctx, evaluation.LongMemEvalV1Config{
+				DatasetPath: *dataset, Revision: *revision, RunID: *runID, Seed: *seed, Limit: *limit, TopK: *topK,
+				WorkDir: *workDir, Observability: recorder,
+			})
 		}
 	case "longmemeval-v2-small":
 		flags := flag.NewFlagSet("benchmark longmemeval-v2-small", flag.ContinueOnError)
 		flags.SetOutput(stderr)
-		output := flags.String("output", "runs", "immutable run output root")
+		outputFlag := flags.String("output", "runs", "immutable run output root")
 		dataRoot := flags.String("data-root", "", "directory containing questions.jsonl, trajectories.jsonl, and haystacks")
 		revision := flags.String("revision", "", "pinned upstream dataset revision")
 		runID := flags.String("run-id", "", "optional unique run identifier")
 		seed := flags.Int64("seed", 1, "fixture seed recorded in the manifest")
 		limit := flags.Int("limit", 10, "first N questions; 0 validates all questions")
 		haystackSize := flags.Int("expected-haystack-size", longMemEvalV2SmallHaystackSizeCLI, "required trajectories per Small-tier haystack")
+		addCommandTelemetryFlags(flags, &otelEndpoint, &otelServiceName)
 		if err := flags.Parse(args[1:]); err != nil {
 			return 2
 		}
-		benchmarkRun, err = evaluation.RunLongMemEvalV2Small(evaluation.LongMemEvalV2Config{
-			DataRoot: *dataRoot, Revision: *revision, RunID: *runID, Seed: *seed, Limit: *limit, ExpectedHaystackSize: *haystackSize,
-		})
-		if err == nil {
-			return writeBenchmarkRun(*output, benchmarkRun, stdout, stderr)
+		output = *outputFlag
+		runBenchmark = func(recorder observability.Recorder) (evaluation.Run, error) {
+			return evaluation.RunLongMemEvalV2Small(ctx, evaluation.LongMemEvalV2Config{
+				DataRoot: *dataRoot, Revision: *revision, RunID: *runID, Seed: *seed, Limit: *limit,
+				ExpectedHaystackSize: *haystackSize, Observability: recorder,
+			})
 		}
 	default:
 		fmt.Fprintf(stderr, "memxplore: unknown benchmark %q\n", args[0])
 		return 2
 	}
-	return cliError(stderr, err)
+	telemetryRuntime, err := telemetry.Setup(ctx, telemetry.Config{
+		Endpoint: otelEndpoint, ServiceName: otelServiceName, ServiceVersion: buildinfo.Version,
+	})
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	benchmarkRun, runErr := runBenchmark(telemetryRuntime.Recorder)
+	if runErr != nil {
+		return cliError(stderr, errors.Join(runErr, shutdownTelemetry(telemetryRuntime)))
+	}
+	path, writeErr := evaluation.WriteRun(output, benchmarkRun)
+	shutdownErr := shutdownTelemetry(telemetryRuntime)
+	if err := errors.Join(writeErr, shutdownErr); err != nil {
+		return cliError(stderr, err)
+	}
+	return writeCLIJSON(stdout, stderr, map[string]any{
+		"run_id": benchmarkRun.Manifest.RunID, "benchmark": benchmarkRun.Manifest.Benchmark, "path": path, "metrics": benchmarkRun.Metrics,
+	})
 }
 
 const longMemEvalV2SmallHaystackSizeCLI = 100
 
-func writeBenchmarkRun(output string, run evaluation.Run, stdout, stderr io.Writer) int {
-	path, err := evaluation.WriteRun(output, run)
-	if err != nil {
-		return cliError(stderr, err)
-	}
-	return writeCLIJSON(stdout, stderr, map[string]any{
-		"run_id": run.Manifest.RunID, "benchmark": run.Manifest.Benchmark, "path": path, "metrics": run.Metrics,
-	})
+func addCommandTelemetryFlags(flags *flag.FlagSet, endpoint, serviceName *string) {
+	flags.StringVar(endpoint, "otel-endpoint", "", "explicit OTLP/HTTP collector base URL")
+	flags.StringVar(serviceName, "otel-service-name", "memxplore", "OpenTelemetry service name")
+}
+
+func shutdownTelemetry(runtime *telemetry.Runtime) error {
+	shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return runtime.Shutdown(shutdownContext)
 }
 
 func evalCommand(args []string, stdout, stderr io.Writer) int {

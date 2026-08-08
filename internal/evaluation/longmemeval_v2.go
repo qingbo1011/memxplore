@@ -2,6 +2,7 @@ package evaluation
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/qingbo1011/memxplore/internal/observability"
 )
 
 const (
@@ -28,6 +31,7 @@ type LongMemEvalV2Config struct {
 	Limit                int
 	ExpectedHaystackSize int
 	Clock                func() time.Time
+	Observability        observability.Recorder
 }
 
 type longMemEvalV2Question struct {
@@ -63,7 +67,10 @@ type longMemEvalV2State struct {
 
 // RunLongMemEvalV2Small validates and materializes the official Small-tier data contract.
 // It deliberately does not claim memory retrieval or question-answering quality.
-func RunLongMemEvalV2Small(config LongMemEvalV2Config) (Run, error) {
+func RunLongMemEvalV2Small(ctx context.Context, config LongMemEvalV2Config) (_ Run, finalErr error) {
+	observer := observability.OrNop(config.Observability)
+	ctx, endOperation := observer.Start(ctx, "benchmark.run", observability.String("benchmark", "longmemeval-v2-small-adapter-smoke"))
+	defer func() { endOperation(finalErr) }()
 	if config.DataRoot == "" || config.Revision == "" || config.Limit < 0 {
 		return Run{}, fmt.Errorf("LongMemEval-V2 data root, pinned revision, and non-negative limit are required")
 	}
@@ -94,7 +101,7 @@ func RunLongMemEvalV2Small(config LongMemEvalV2Config) (Run, error) {
 	if err != nil {
 		return Run{}, err
 	}
-	questions, err := readLongMemEvalV2Questions(questionsPath, config.Limit)
+	questions, err := readLongMemEvalV2Questions(ctx, questionsPath, config.Limit)
 	if err != nil {
 		return Run{}, err
 	}
@@ -133,7 +140,7 @@ func RunLongMemEvalV2Small(config LongMemEvalV2Config) (Run, error) {
 		}
 	}
 	materializeStarted := time.Now()
-	trajectories, ingestTokens, err := readLongMemEvalV2Trajectories(trajectoriesPath, required)
+	trajectories, ingestTokens, err := readLongMemEvalV2Trajectories(ctx, trajectoriesPath, required)
 	if err != nil {
 		return Run{}, err
 	}
@@ -145,11 +152,14 @@ func RunLongMemEvalV2Small(config LongMemEvalV2Config) (Run, error) {
 			}
 		}
 		slices.Sort(missing)
-		return Run{}, fmt.Errorf("Small-tier haystacks reference %d missing trajectories: %s", len(missing), strings.Join(missing, ", "))
+		return Run{}, fmt.Errorf("small-tier haystacks reference %d missing trajectories: %s", len(missing), strings.Join(missing, ", "))
 	}
 	predictions := make([]Prediction, 0, len(questions)*2)
 	traces := make([]TraceReference, 0, len(questions))
 	for _, question := range questions {
+		if err := ctx.Err(); err != nil {
+			return Run{}, err
+		}
 		ids := haystacks[question.ID]
 		caseStarted := time.Now()
 		resolved := make([]string, 0, len(ids))
@@ -201,12 +211,14 @@ func RunLongMemEvalV2Small(config LongMemEvalV2Config) (Run, error) {
 	if config.Limit > 0 {
 		manifest.Limitations = append(manifest.Limitations, fmt.Sprintf("Partial bounded smoke run: first %d questions only.", len(questions)))
 	}
+	observer.Observe(ctx, observability.MetricBenchmarkCases, float64(len(questions)), observability.String("benchmark", manifest.Benchmark))
+	observer.Observe(ctx, observability.MetricBenchmarkFailures, float64(metrics.Variants["schema-adapter"].Failures), observability.String("benchmark", manifest.Benchmark), observability.String("variant", "schema-adapter"))
 	return Run{Manifest: manifest, Predictions: predictions, Metrics: metrics, Traces: traces}, nil
 }
 
-func readLongMemEvalV2Questions(path string, limit int) ([]longMemEvalV2Question, error) {
+func readLongMemEvalV2Questions(ctx context.Context, path string, limit int) ([]longMemEvalV2Question, error) {
 	questions := make([]longMemEvalV2Question, 0)
-	err := decodeJSONSequence(path, func(index int, decoder *json.Decoder) error {
+	err := decodeJSONSequence(ctx, path, func(index int, decoder *json.Decoder) error {
 		var question longMemEvalV2Question
 		if err := decoder.Decode(&question); err != nil {
 			return err
@@ -223,10 +235,10 @@ func readLongMemEvalV2Questions(path string, limit int) ([]longMemEvalV2Question
 	return questions, err
 }
 
-func readLongMemEvalV2Trajectories(path string, required map[string]struct{}) (map[string]longMemEvalV2Trajectory, int, error) {
+func readLongMemEvalV2Trajectories(ctx context.Context, path string, required map[string]struct{}) (map[string]longMemEvalV2Trajectory, int, error) {
 	result := make(map[string]longMemEvalV2Trajectory, len(required))
 	tokens := 0
-	err := decodeJSONSequence(path, func(index int, decoder *json.Decoder) error {
+	err := decodeJSONSequence(ctx, path, func(index int, decoder *json.Decoder) error {
 		var trajectory longMemEvalV2Trajectory
 		if err := decoder.Decode(&trajectory); err != nil {
 			return err
@@ -289,7 +301,7 @@ func readLongMemEvalV2Haystacks(path string) (map[string][]string, error) {
 	return haystacks, nil
 }
 
-func decodeJSONSequence(path string, visit func(int, *json.Decoder) error) error {
+func decodeJSONSequence(ctx context.Context, path string, visit func(int, *json.Decoder) error) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return err
@@ -298,6 +310,9 @@ func decodeJSONSequence(path string, visit func(int, *json.Decoder) error) error
 	decoder := json.NewDecoder(bufio.NewReaderSize(file, 1<<20))
 	decoder.DisallowUnknownFields()
 	for index := 0; ; index++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := visit(index, decoder); err != nil {
 			if err == io.EOF {
 				return nil

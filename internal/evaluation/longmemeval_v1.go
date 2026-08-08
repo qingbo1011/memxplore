@@ -16,20 +16,22 @@ import (
 	"github.com/qingbo1011/memxplore/internal/adapters/sqlite"
 	"github.com/qingbo1011/memxplore/internal/application"
 	"github.com/qingbo1011/memxplore/internal/domain"
+	"github.com/qingbo1011/memxplore/internal/observability"
 	"github.com/qingbo1011/memxplore/internal/policy"
 	strategydef "github.com/qingbo1011/memxplore/internal/strategy"
 )
 
 // LongMemEvalV1Config controls the official v1 cleaned-dataset retrieval adapter.
 type LongMemEvalV1Config struct {
-	DatasetPath string
-	Revision    string
-	RunID       string
-	Seed        int64
-	Limit       int
-	TopK        int
-	WorkDir     string
-	Clock       func() time.Time
+	DatasetPath   string
+	Revision      string
+	RunID         string
+	Seed          int64
+	Limit         int
+	TopK          int
+	WorkDir       string
+	Clock         func() time.Time
+	Observability observability.Recorder
 }
 
 type longMemEvalV1Turn struct {
@@ -52,7 +54,10 @@ type longMemEvalV1Instance struct {
 
 // RunLongMemEvalV1 ingests every selected session as a factual memory and evaluates session retrieval.
 // Limit 0 is the full official 500-question protocol; positive limits are explicitly partial runs.
-func RunLongMemEvalV1(ctx context.Context, config LongMemEvalV1Config) (Run, error) {
+func RunLongMemEvalV1(ctx context.Context, config LongMemEvalV1Config) (_ Run, finalErr error) {
+	observer := observability.OrNop(config.Observability)
+	ctx, endOperation := observer.Start(ctx, "benchmark.run", observability.String("benchmark", "longmemeval-v1-retrieval"))
+	defer func() { endOperation(finalErr) }()
 	if config.DatasetPath == "" || config.Revision == "" || config.Limit < 0 {
 		return Run{}, fmt.Errorf("LongMemEval v1 dataset path, pinned revision, and non-negative limit are required")
 	}
@@ -91,7 +96,7 @@ func RunLongMemEvalV1(ctx context.Context, config LongMemEvalV1Config) (Run, err
 	defer store.Close()
 	service, _ := application.NewLifecycleService(policy.OwnerPolicy{}, store)
 	retriever, err := application.NewRetriever(application.RetrieverConfig{
-		Repository: store, TraceSink: store, Now: func() time.Time { return clock().UTC() },
+		Repository: store, TraceSink: store, Now: func() time.Time { return clock().UTC() }, Observability: observer,
 	})
 	if err != nil {
 		return Run{}, err
@@ -106,7 +111,7 @@ func RunLongMemEvalV1(ctx context.Context, config LongMemEvalV1Config) (Run, err
 	strategyHashes := map[string]string{adapter.ID + "@" + adapter.Version: adapterHash}
 	ingestStarted := time.Now()
 	indexed, ingestTokens := 0, 0
-	cases, err := streamLongMemEvalV1(config.DatasetPath, config.Limit, func(index int, instance longMemEvalV1Instance) error {
+	cases, err := streamLongMemEvalV1(ctx, config.DatasetPath, config.Limit, func(index int, instance longMemEvalV1Instance) error {
 		if err := validateLongMemEvalV1(instance); err != nil {
 			return fmt.Errorf("case %d: %w", index, err)
 		}
@@ -227,10 +232,12 @@ func RunLongMemEvalV1(ctx context.Context, config LongMemEvalV1Config) (Run, err
 	if config.Limit > 0 {
 		manifest.Limitations = append(manifest.Limitations, fmt.Sprintf("Partial bounded run: first %d cases only.", cases))
 	}
+	observer.Observe(ctx, observability.MetricBenchmarkCases, float64(cases), observability.String("benchmark", manifest.Benchmark))
+	observer.Observe(ctx, observability.MetricBenchmarkFailures, float64(metrics.Variants["lexical"].Failures), observability.String("benchmark", manifest.Benchmark), observability.String("variant", "lexical"))
 	return Run{Manifest: manifest, Predictions: predictions, Metrics: metrics, Traces: traces}, nil
 }
 
-func streamLongMemEvalV1(path string, limit int, visit func(int, longMemEvalV1Instance) error) (cases int, err error) {
+func streamLongMemEvalV1(ctx context.Context, path string, limit int, visit func(int, longMemEvalV1Instance) error) (cases int, err error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return 0, err
@@ -243,6 +250,9 @@ func streamLongMemEvalV1(path string, limit int, visit func(int, longMemEvalV1In
 		return 0, fmt.Errorf("LongMemEval v1 dataset must be a JSON array")
 	}
 	for decoder.More() {
+		if err := ctx.Err(); err != nil {
+			return cases, err
+		}
 		var instance longMemEvalV1Instance
 		if err := decoder.Decode(&instance); err != nil {
 			return cases, fmt.Errorf("decode LongMemEval v1 case %d: %w", cases, err)

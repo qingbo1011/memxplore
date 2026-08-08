@@ -11,6 +11,7 @@ import (
 	"github.com/qingbo1011/memxplore/internal/adapters/sqlite"
 	"github.com/qingbo1011/memxplore/internal/application"
 	"github.com/qingbo1011/memxplore/internal/domain"
+	"github.com/qingbo1011/memxplore/internal/observability"
 	"github.com/qingbo1011/memxplore/internal/policy"
 	"github.com/qingbo1011/memxplore/internal/strategy/formation"
 )
@@ -28,6 +29,7 @@ type FormationConfig struct {
 	Lease               time.Duration
 	PollInterval        time.Duration
 	Now                 func() time.Time
+	Observability       observability.Recorder
 }
 
 // FormationWorker applies durable observation jobs and optionally embeds results.
@@ -59,6 +61,7 @@ func NewFormationWorker(config FormationConfig) (*FormationWorker, error) {
 	if config.Now == nil {
 		config.Now = func() time.Time { return time.Now().UTC() }
 	}
+	config.Observability = observability.OrNop(config.Observability)
 	return &FormationWorker{config: config, wake: make(chan struct{}, 1)}, nil
 }
 
@@ -95,12 +98,14 @@ func (w *FormationWorker) Run(ctx context.Context) error {
 }
 
 // ProcessOne claims and resolves one job. Failures are durably retried up to three attempts.
-func (w *FormationWorker) ProcessOne(ctx context.Context, workerID string) error {
+func (w *FormationWorker) ProcessOne(ctx context.Context, workerID string) (finalErr error) {
 	now := w.config.Now().UTC()
 	job, err := w.config.Store.Claim(ctx, workerID, now, w.config.Lease)
 	if err != nil {
 		return err
 	}
+	ctx, endOperation := w.config.Observability.Start(ctx, "memory.formation", observability.String("job_kind", job.Kind))
+	defer func() { endOperation(finalErr) }()
 	if err := w.processClaimed(ctx, job); err != nil {
 		message := err.Error()
 		if len(message) > 2048 {

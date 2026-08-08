@@ -13,6 +13,7 @@ import (
 	"github.com/qingbo1011/memxplore/internal/adapters/sqlite"
 	"github.com/qingbo1011/memxplore/internal/application"
 	"github.com/qingbo1011/memxplore/internal/domain"
+	"github.com/qingbo1011/memxplore/internal/observability"
 	"github.com/qingbo1011/memxplore/internal/policy"
 	strategydef "github.com/qingbo1011/memxplore/internal/strategy"
 	"github.com/qingbo1011/memxplore/internal/strategy/evolution"
@@ -21,10 +22,11 @@ import (
 
 // InternalConfig controls the built-in deterministic lifecycle evaluation.
 type InternalConfig struct {
-	RunID   string
-	Seed    int64
-	WorkDir string
-	Clock   func() time.Time
+	RunID         string
+	Seed          int64
+	WorkDir       string
+	Clock         func() time.Time
+	Observability observability.Recorder
 }
 
 type internalHarness struct {
@@ -53,7 +55,10 @@ var internalFixtures = []internalFixture{
 }
 
 // RunInternal executes actual SQLite lifecycle and lexical retrieval for three paired scenarios.
-func RunInternal(ctx context.Context, config InternalConfig) (Run, error) {
+func RunInternal(ctx context.Context, config InternalConfig) (_ Run, finalErr error) {
+	observer := observability.OrNop(config.Observability)
+	ctx, endOperation := observer.Start(ctx, "benchmark.run", observability.String("benchmark", "internal-lifecycle-v1"))
+	defer func() { endOperation(finalErr) }()
 	clock := config.Clock
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
@@ -76,7 +81,7 @@ func RunInternal(ctx context.Context, config InternalConfig) (Run, error) {
 	defer store.Close()
 	service, _ := application.NewLifecycleService(policy.OwnerPolicy{}, store)
 	retriever, err := application.NewRetriever(application.RetrieverConfig{
-		Repository: store, TraceSink: store, Now: func() time.Time { return clock().UTC() },
+		Repository: store, TraceSink: store, Now: func() time.Time { return clock().UTC() }, Observability: observer,
 	})
 	if err != nil {
 		return Run{}, err
@@ -121,6 +126,8 @@ func RunInternal(ctx context.Context, config InternalConfig) (Run, error) {
 		"System latencies are local wall-clock measurements and are not cross-machine comparable.",
 		"No provider or model is called by this benchmark.",
 	}
+	observer.Observe(ctx, observability.MetricBenchmarkCases, float64(len(internalFixtures)), observability.String("benchmark", manifest.Benchmark))
+	observer.Observe(ctx, observability.MetricBenchmarkFailures, float64(metrics.Variants["lexical"].Failures), observability.String("benchmark", manifest.Benchmark), observability.String("variant", "lexical"))
 	return Run{Manifest: manifest, Predictions: harness.predictions, Metrics: metrics, Traces: harness.traces}, nil
 }
 

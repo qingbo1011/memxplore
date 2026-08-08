@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/qingbo1011/memxplore/internal/auth"
 	"github.com/qingbo1011/memxplore/internal/daemon"
 	"github.com/qingbo1011/memxplore/internal/domain"
+	"github.com/qingbo1011/memxplore/internal/observability"
 )
 
 func testServer(t *testing.T, enableAgentEvents bool) (*Server, *sqlite.Store, context.CancelFunc) {
@@ -178,4 +180,43 @@ func TestAgentEventReplayReturnsSameDurableJob(t *testing.T) {
 	if firstResponse.Job.ID == "" || firstResponse.Job.ID != secondResponse.Job.ID {
 		t.Fatalf("first job=%s second job=%s", firstResponse.Job.ID, secondResponse.Job.ID)
 	}
+}
+
+func TestHTTPObservabilityUsesRoutePatternWithoutRequestContent(t *testing.T) {
+	recorder := &recordingObserver{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/jobs/{id}", func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusNoContent)
+	})
+	handler := observeHTTP(recorder, mux)
+	request := httptest.NewRequest(http.MethodGet, "/v1/jobs/private-job-id?token=secret", nil)
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+	joined := recorder.joinedAttributes()
+	if !strings.Contains(joined, "http.route=GET /v1/jobs/{id}") || !strings.Contains(joined, "http.response.status_code=204") {
+		t.Fatalf("attributes=%s", joined)
+	}
+	if strings.Contains(joined, "private-job-id") || strings.Contains(joined, "secret") {
+		t.Fatalf("request content leaked into telemetry: %s", joined)
+	}
+}
+
+type recordingObserver struct {
+	attributes []observability.Attribute
+}
+
+func (r *recordingObserver) Start(ctx context.Context, _ string, attributes ...observability.Attribute) (context.Context, observability.EndOperation) {
+	r.attributes = append(r.attributes, attributes...)
+	return ctx, func(_ error, final ...observability.Attribute) {
+		r.attributes = append(r.attributes, final...)
+	}
+}
+
+func (*recordingObserver) Observe(context.Context, string, float64, ...observability.Attribute) {}
+
+func (r *recordingObserver) joinedAttributes() string {
+	values := make([]string, len(r.attributes))
+	for index, attribute := range r.attributes {
+		values[index] = attribute.Key + "=" + attribute.Value
+	}
+	return strings.Join(values, "\n")
 }

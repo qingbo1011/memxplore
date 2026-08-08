@@ -1,6 +1,7 @@
 package evaluation
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -8,7 +9,7 @@ import (
 
 func TestLongMemEvalV2SmallAdapterValidatesMaterialization(t *testing.T) {
 	now := time.Date(2026, 8, 8, 15, 0, 0, 0, time.UTC)
-	run, err := RunLongMemEvalV2Small(LongMemEvalV2Config{
+	run, err := RunLongMemEvalV2Small(context.Background(), LongMemEvalV2Config{
 		DataRoot: filepath.Join("testdata", "longmemeval_v2_small"), Revision: "fixture-v2", RunID: "longmemeval-v2-test",
 		Limit: 2, ExpectedHaystackSize: 2, Clock: func() time.Time { return now },
 	})
@@ -34,7 +35,7 @@ func TestLongMemEvalV2SmallAdapterValidatesMaterialization(t *testing.T) {
 }
 
 func TestLongMemEvalV2SmallRejectsMissingTrajectory(t *testing.T) {
-	_, err := RunLongMemEvalV2Small(LongMemEvalV2Config{
+	_, err := RunLongMemEvalV2Small(context.Background(), LongMemEvalV2Config{
 		DataRoot: filepath.Join("testdata", "longmemeval_v2_small"), Revision: "fixture-v2", Limit: 1, ExpectedHaystackSize: 3,
 	})
 	if err == nil {

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/qingbo1011/memxplore/internal/buildinfo"
 	"github.com/qingbo1011/memxplore/internal/daemon"
 	"github.com/qingbo1011/memxplore/internal/domain"
+	"github.com/qingbo1011/memxplore/internal/observability"
 	"github.com/qingbo1011/memxplore/internal/policy"
 )
 
@@ -36,6 +38,7 @@ type Config struct {
 	AllowLoopbackWithoutToken bool
 	EnableAgentEvents         bool
 	Now                       func() time.Time
+	Observability             observability.Recorder
 }
 
 // Server implements versioned REST and JSON-RPC MCP handlers.
@@ -52,6 +55,7 @@ func NewServer(config Config) (*Server, error) {
 	if config.Now == nil {
 		config.Now = func() time.Time { return time.Now().UTC() }
 	}
+	config.Observability = observability.OrNop(config.Observability)
 	server := &Server{config: config}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", server.health)
@@ -65,7 +69,7 @@ func NewServer(config Config) (*Server, error) {
 	mux.Handle("POST /v1/tokens", server.authorize(auth.ScopeAdmin, http.HandlerFunc(server.createToken)))
 	mux.Handle("POST /v1/agent-events", server.authorize(auth.ScopeMemoryWrite, http.HandlerFunc(server.agentEvent)))
 	mux.Handle("POST /v1/mcp", server.authorizeAny(http.HandlerFunc(server.mcpHTTP)))
-	server.handler = securityHeaders(mux)
+	server.handler = observeHTTP(config.Observability, securityHeaders(mux))
 	return server, nil
 }
 
@@ -435,6 +439,53 @@ func securityHeaders(next http.Handler) http.Handler {
 		writer.Header().Set("Cache-Control", "no-store")
 		writer.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
 		next.ServeHTTP(writer, request)
+	})
+}
+
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusWriter) WriteHeader(status int) {
+	if w.status != 0 {
+		return
+	}
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusWriter) Write(data []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(data)
+}
+
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func observeHTTP(recorder observability.Recorder, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		ctx, endOperation := recorder.Start(request.Context(), "http.request", observability.String("http.request.method", request.Method))
+		observed := &statusWriter{ResponseWriter: writer}
+		instrumented := request.WithContext(ctx)
+		next.ServeHTTP(observed, instrumented)
+		if observed.status == 0 {
+			observed.status = http.StatusOK
+		}
+		pattern := instrumented.Pattern
+		if pattern == "" {
+			pattern = "unmatched"
+		}
+		attrs := []observability.Attribute{
+			observability.String("http.route", pattern),
+			observability.String("http.response.status_code", strconv.Itoa(observed.status)),
+		}
+		if observed.status >= http.StatusInternalServerError {
+			endOperation(fmt.Errorf("HTTP %d", observed.status), attrs...)
+			return
+		}
+		endOperation(nil, attrs...)
 	})
 }
 

@@ -214,7 +214,7 @@ func TestOnlineBackupAndRestore(t *testing.T) {
 	}
 }
 
-func TestPurgeRemovesContentIndexAndWALResidue(t *testing.T) {
+func TestSecurityGatePurgeRemovesContentIndexAndWALResidue(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
 	path := filepath.Join(directory, "purge.sqlite")

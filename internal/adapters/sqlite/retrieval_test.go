@@ -49,7 +49,7 @@ func putRetrievalWorking(t *testing.T, store *Store, memoryID, versionID, contex
 	}
 }
 
-func TestAuthorizedBitemporalCandidateQueriesAndEmbeddings(t *testing.T) {
+func TestSecurityGateCrossNamespaceScopeAndTimeLeak(t *testing.T) {
 	ctx := context.Background()
 	store := testStore(t)
 	now := time.Date(2026, 8, 8, 3, 0, 0, 0, time.UTC)
@@ -59,6 +59,21 @@ func TestAuthorizedBitemporalCandidateQueriesAndEmbeddings(t *testing.T) {
 	putRetrievalFactual(t, store, "mem-private-b", "mv-private-b", "owner-bob", domain.VisibilityPrivate, "retrieval needle private bob", currentValid, currentSystem)
 	putRetrievalFactual(t, store, "mem-shared", "mv-shared", "owner-bob", domain.VisibilityShared, "retrieval needle shared", currentValid, currentSystem)
 	putRetrievalFactual(t, store, "mem-public", "mv-public", "owner-bob", domain.VisibilityPublic, "retrieval needle public", currentValid, currentSystem)
+	otherSubject, otherSubjectVersion := testFactualMemory("mem-subject-other", "mv-subject-other", "obs-subject-other", "retrieval needle other subject")
+	otherSubject.Scope.Subject = "subject-other"
+	otherSubjectVersion.Payload.Factual.ClaimSubject = "subject-other"
+	otherSubjectVersion.ValidTime = currentValid
+	otherSubjectVersion.SystemTime = currentSystem
+	if err := store.PutMemory(ctx, otherSubject, otherSubjectVersion); err != nil {
+		t.Fatal(err)
+	}
+	otherNamespace, otherNamespaceVersion := testFactualMemory("mem-namespace-other", "mv-namespace-other", "obs-namespace-other", "retrieval needle other namespace")
+	otherNamespace.Scope.Namespace = "ns-other"
+	otherNamespaceVersion.ValidTime = currentValid
+	otherNamespaceVersion.SystemTime = currentSystem
+	if err := store.PutMemory(ctx, otherNamespace, otherNamespaceVersion); err != nil {
+		t.Fatal(err)
+	}
 	expiredAt := now.Add(-time.Minute)
 	putRetrievalFactual(t, store, "mem-expired", "mv-expired", "owner-alice", domain.VisibilityPrivate, "retrieval needle expired",
 		domain.TimeRange{From: now.Add(-time.Hour), To: &expiredAt}, currentSystem)
@@ -97,7 +112,7 @@ func TestAuthorizedBitemporalCandidateQueriesAndEmbeddings(t *testing.T) {
 	for _, candidate := range lexical {
 		got[candidate.VersionID] = true
 	}
-	if !got["mv-private-a"] || !got["mv-shared"] || got["mv-private-b"] || got["mv-public"] || got["mv-expired"] || got["mv-future"] || got["mv-working-other"] {
+	if !got["mv-private-a"] || !got["mv-shared"] || got["mv-private-b"] || got["mv-public"] || got["mv-expired"] || got["mv-future"] || got["mv-working-other"] || got["mv-subject-other"] || got["mv-namespace-other"] {
 		t.Fatalf("authorization/time/context leak: %+v", got)
 	}
 	semantic, err := store.ListSemanticCandidates(ctx, filter, "fake", "embed-v1", 20)
@@ -108,6 +123,11 @@ func TestAuthorizedBitemporalCandidateQueriesAndEmbeddings(t *testing.T) {
 	lexical, err = store.SearchLexicalCandidates(ctx, filter, "needle", 20)
 	if err != nil || len(lexical) != 3 {
 		t.Fatalf("public opt-in candidates=%d err=%v", len(lexical), err)
+	}
+	filter.Access.Namespace = "ns-absent"
+	lexical, err = store.SearchLexicalCandidates(ctx, filter, "needle", 20)
+	if err != nil || len(lexical) != 0 {
+		t.Fatalf("cross-namespace candidates=%d err=%v", len(lexical), err)
 	}
 }
 

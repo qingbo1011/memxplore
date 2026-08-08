@@ -245,7 +245,7 @@ func ollamaNativeURL(openAIURL string) (string, error) {
 	}
 	path := strings.TrimRight(parsed.Path, "/")
 	if !strings.HasSuffix(path, "/v1") {
-		return "", fmt.Errorf("Ollama URL path must end in /v1")
+		return "", fmt.Errorf("ollama URL path must end in /v1")
 	}
 	parsed.Path = strings.TrimSuffix(path, "/v1")
 	parsed.RawPath = ""

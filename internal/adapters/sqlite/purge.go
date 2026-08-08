@@ -22,13 +22,13 @@ const (
 
 // PurgeReceipt is deliberately non-content-bearing.
 type PurgeReceipt struct {
-	ID                domain.ID
-	Namespace         domain.ID
-	TargetID          domain.ID
-	Actor             domain.ID
-	VersionsDeleted   int
-	ArtifactsDetached int
-	PurgedAt          time.Time
+	ID                domain.ID `json:"id"`
+	Namespace         domain.ID `json:"namespace"`
+	TargetID          domain.ID `json:"target_id"`
+	Actor             domain.ID `json:"actor"`
+	VersionsDeleted   int       `json:"versions_deleted"`
+	ArtifactsDetached int       `json:"artifacts_detached"`
+	PurgedAt          time.Time `json:"purged_at"`
 }
 
 // PurgeMemory irreversibly removes content, dependencies, and FTS rows and writes a non-content receipt.

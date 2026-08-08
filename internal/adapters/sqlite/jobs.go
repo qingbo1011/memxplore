@@ -15,6 +15,10 @@ import (
 // EnqueueObservation captures an immutable observation and its formation job in one transaction.
 // The durable job identity is inserted first so idempotent replays never duplicate observations.
 func (s *Store) EnqueueObservation(ctx context.Context, observation domain.Observation, job application.Job) (application.Job, bool, error) {
+	return s.enqueueObservation(ctx, observation, job, nil)
+}
+
+func (s *Store) enqueueObservation(ctx context.Context, observation domain.Observation, job application.Job, receipt *AgentEventReceipt) (application.Job, bool, error) {
 	if err := observation.Validate(); err != nil {
 		return application.Job{}, false, fmt.Errorf("validate observation: %w", err)
 	}
@@ -56,6 +60,14 @@ func (s *Store) EnqueueObservation(ctx context.Context, observation domain.Obser
 	}
 	if err := insertObservation(ctx, tx, observation, createdAt); err != nil {
 		return application.Job{}, false, err
+	}
+	if receipt != nil {
+		if _, err := tx.ExecContext(ctx, `
+            INSERT INTO agent_event_receipts(event_id, schema_version, source, observation_id, job_id, received_at)
+            VALUES(?, ?, ?, ?, ?, ?)`, receipt.EventID, receipt.SchemaVersion, receipt.Source,
+			observation.ID, job.ID, formatTime(receipt.ReceivedAt)); err != nil {
+			return application.Job{}, false, fmt.Errorf("insert AgentEvent receipt: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return application.Job{}, false, fmt.Errorf("commit observation enqueue: %w", err)

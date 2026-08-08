@@ -1,12 +1,40 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
+	"os/signal"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
 
+	"github.com/qingbo1011/memxplore/internal/adapters/provider/openaicompat"
+	"github.com/qingbo1011/memxplore/internal/adapters/sqlite"
+	"github.com/qingbo1011/memxplore/internal/agentevent"
+	"github.com/qingbo1011/memxplore/internal/api"
+	"github.com/qingbo1011/memxplore/internal/application"
+	"github.com/qingbo1011/memxplore/internal/auth"
 	"github.com/qingbo1011/memxplore/internal/buildinfo"
+	"github.com/qingbo1011/memxplore/internal/daemon"
+	"github.com/qingbo1011/memxplore/internal/domain"
+	"github.com/qingbo1011/memxplore/sdk"
+)
+
+const (
+	defaultAPIURL         = "http://127.0.0.1:7878"
+	defaultListen         = "127.0.0.1:7878"
+	defaultDB             = "memxplore.sqlite"
+	defaultEmbeddingModel = "qwen3-embedding:0.6b"
+	defaultGeneratorModel = "hf.co/HauhauCS/Qwen3.5-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M"
 )
 
 type versionOutput struct {
@@ -18,18 +46,39 @@ type versionOutput struct {
 }
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	os.Exit(runContext(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	return runContext(context.Background(), args, os.Stdin, stdout, stderr)
+}
+
+func runContext(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		printUsage(stdout)
 		return 0
 	}
-
 	switch args[0] {
 	case "version":
 		return printVersion(args[1:], stdout, stderr)
+	case "serve":
+		return serveCommand(ctx, args[1:], stdout, stderr)
+	case "mcp":
+		return mcpCommand(ctx, args[1:], stdin, stdout, stderr)
+	case "token":
+		return tokenCommand(ctx, args[1:], stdout, stderr)
+	case "remember":
+		return rememberCommand(ctx, args[1:], stdout, stderr)
+	case "recall":
+		return recallCommand(ctx, args[1:], stdout, stderr)
+	case "job":
+		return jobCommand(ctx, args[1:], stdout, stderr)
+	case "archive", "forget", "purge":
+		return lifecycleCommand(ctx, args[0], args[1:], stdout, stderr)
+	case "ingest":
+		return ingestCommand(ctx, args[1:], stdin, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "memxplore: unknown command %q\n", args[0])
 		printUsage(stderr)
@@ -39,39 +88,529 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 func printVersion(args []string, stdout, stderr io.Writer) int {
 	output := versionOutput{
-		Program:       "memxplore",
-		Version:       buildinfo.Version,
-		Protocol:      buildinfo.ProtocolVersion,
-		StorageSchema: buildinfo.StorageSchemaVersion,
-		ExportSchema:  buildinfo.ExportSchemaVersion,
+		Program: "memxplore", Version: buildinfo.Version, Protocol: buildinfo.ProtocolVersion,
+		StorageSchema: buildinfo.StorageSchemaVersion, ExportSchema: buildinfo.ExportSchemaVersion,
 	}
-
 	if len(args) == 0 {
 		fmt.Fprintf(stdout, "%s %s (protocol %s, storage schema %d, export schema %d)\n",
 			output.Program, output.Version, output.Protocol, output.StorageSchema, output.ExportSchema)
 		return 0
 	}
 	if len(args) == 1 && args[0] == "--json" {
-		encoder := json.NewEncoder(stdout)
-		encoder.SetIndent("", "  ")
-		if err := encoder.Encode(output); err != nil {
-			fmt.Fprintf(stderr, "memxplore: encode version: %v\n", err)
-			return 1
-		}
-		return 0
+		return writeCLIJSON(stdout, stderr, output)
 	}
-
 	fmt.Fprintln(stderr, "usage: memxplore version [--json]")
 	return 2
 }
 
-func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "MemXplore - executable agent-memory reference implementation and research workbench")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  memxplore <command> [options]")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Commands:")
-	fmt.Fprintln(w, "  version   Print program and schema versions")
-	fmt.Fprintln(w, "  help      Show this help")
+type runtimeFlags struct {
+	db                  string
+	namespace           string
+	owner               string
+	actor               string
+	ollamaURL           string
+	embeddingModel      string
+	embeddingDimensions int
+	generatorModel      string
+	enableAssisted      bool
+	enableAgentEvents   bool
+}
+
+func addRuntimeFlags(flags *flag.FlagSet, config *runtimeFlags) {
+	flags.StringVar(&config.db, "db", defaultDB, "SQLite database path")
+	flags.StringVar(&config.namespace, "namespace", "local", "local namespace")
+	flags.StringVar(&config.owner, "owner", "local", "local private owner")
+	flags.StringVar(&config.actor, "actor", "local-cli", "local actor identifier")
+	flags.StringVar(&config.ollamaURL, "ollama-url", "", "explicit Ollama OpenAI-compatible URL, e.g. http://127.0.0.1:11434/v1")
+	flags.StringVar(&config.embeddingModel, "embedding-model", defaultEmbeddingModel, "configured embedding model")
+	flags.IntVar(&config.embeddingDimensions, "embedding-dimensions", 1024, "configured embedding dimensions")
+	flags.StringVar(&config.generatorModel, "generator-model", defaultGeneratorModel, "configured generator model")
+	flags.BoolVar(&config.enableAssisted, "enable-assisted", false, "enable generator-assisted formation using the explicit Ollama URL")
+	flags.BoolVar(&config.enableAgentEvents, "enable-agent-events", false, "enable opt-in AgentEvent HTTP ingestion")
+}
+
+type localRuntime struct {
+	store  *sqlite.Store
+	worker *daemon.FormationWorker
+	api    *api.Server
+}
+
+func buildRuntime(ctx context.Context, config runtimeFlags, allowLoopbackWithoutToken bool) (*localRuntime, error) {
+	store, err := sqlite.Open(ctx, config.db, sqlite.DefaultOptions())
+	if err != nil {
+		return nil, err
+	}
+	failed := true
+	defer func() {
+		if failed {
+			_ = store.Close()
+		}
+	}()
+	var provider *openaicompat.Client
+	if config.ollamaURL != "" {
+		provider, err = openaicompat.New(openaicompat.Config{BaseURL: config.ollamaURL})
+		if err != nil {
+			return nil, err
+		}
+	}
+	if config.enableAssisted && provider == nil {
+		return nil, fmt.Errorf("--enable-assisted requires --ollama-url")
+	}
+	retrieverConfig := application.RetrieverConfig{Repository: store, TraceSink: store}
+	workerConfig := daemon.FormationConfig{Store: store}
+	if provider != nil {
+		retrieverConfig.Embedder = provider
+		retrieverConfig.EmbeddingProvider = "ollama"
+		retrieverConfig.EmbeddingModel = config.embeddingModel
+		retrieverConfig.EmbeddingDimensions = config.embeddingDimensions
+		workerConfig.Embedder = provider
+		workerConfig.EmbeddingProvider = "ollama"
+		workerConfig.EmbeddingModel = config.embeddingModel
+		workerConfig.EmbeddingDimensions = config.embeddingDimensions
+	}
+	if config.enableAssisted {
+		workerConfig.Generator = provider
+		workerConfig.GeneratorProvider = "ollama"
+		workerConfig.GeneratorModel = config.generatorModel
+	}
+	retriever, err := application.NewRetriever(retrieverConfig)
+	if err != nil {
+		return nil, err
+	}
+	worker, err := daemon.NewFormationWorker(workerConfig)
+	if err != nil {
+		return nil, err
+	}
+	principal := auth.Principal{
+		PrincipalID: domain.ID(config.actor), Namespace: domain.ID(config.namespace), PrivateOwners: []domain.ID{domain.ID(config.owner)},
+		Scopes: []auth.Scope{auth.ScopeMemoryRead, auth.ScopeMemoryWrite, auth.ScopeMemoryPurge, auth.ScopeAdmin},
+	}
+	server, err := api.NewServer(api.Config{
+		Store: store, Retriever: retriever, Worker: worker, LoopbackPrincipal: principal,
+		AllowLoopbackWithoutToken: allowLoopbackWithoutToken, EnableAgentEvents: config.enableAgentEvents,
+	})
+	if err != nil {
+		return nil, err
+	}
+	failed = false
+	return &localRuntime{store: store, worker: worker, api: server}, nil
+}
+
+func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	var config runtimeFlags
+	addRuntimeFlags(flags, &config)
+	listen := flags.String("listen", defaultListen, "HTTP listen address")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	loopback := listenIsLoopback(*listen)
+	runtime, err := buildRuntime(ctx, config, loopback)
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	defer runtime.store.Close()
+	if !loopback {
+		count, countErr := runtime.store.APITokenCount(ctx, time.Now().UTC())
+		if countErr != nil {
+			return cliError(stderr, countErr)
+		}
+		if count == 0 {
+			fmt.Fprintln(stderr, "memxplore: refusing non-loopback listen without an active scoped token; create one with `memxplore token create`")
+			return 1
+		}
+	}
+	serverCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() { _ = runtime.worker.Run(serverCtx) }()
+	httpServer := &http.Server{
+		Addr: *listen, Handler: runtime.api.Handler(), ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout: 30 * time.Second, WriteTimeout: 35 * time.Second, IdleTimeout: 2 * time.Minute,
+	}
+	errorsChannel := make(chan error, 1)
+	go func() { errorsChannel <- httpServer.ListenAndServe() }()
+	fmt.Fprintf(stdout, "MemXplore %s listening on http://%s (protocol %s, schema %d)\n",
+		buildinfo.Version, *listen, buildinfo.ProtocolVersion, buildinfo.StorageSchemaVersion)
+	select {
+	case err := <-errorsChannel:
+		if !errors.Is(err, http.ErrServerClosed) {
+			return cliError(stderr, err)
+		}
+		return 0
+	case <-ctx.Done():
+		shutdownCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			return cliError(stderr, err)
+		}
+		return 0
+	}
+}
+
+func mcpCommand(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("mcp", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	var config runtimeFlags
+	addRuntimeFlags(flags, &config)
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	runtime, err := buildRuntime(ctx, config, true)
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	defer runtime.store.Close()
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() { _ = runtime.worker.Run(workerCtx) }()
+	principal := auth.Principal{
+		PrincipalID: domain.ID(config.actor), Namespace: domain.ID(config.namespace), PrivateOwners: []domain.ID{domain.ID(config.owner)},
+		Scopes: []auth.Scope{auth.ScopeMemoryRead, auth.ScopeMemoryWrite, auth.ScopeMemoryPurge, auth.ScopeAdmin},
+	}
+	if err := runtime.api.ServeMCPStdio(ctx, stdin, stdout, principal); err != nil && !errors.Is(err, context.Canceled) {
+		return cliError(stderr, err)
+	}
+	return 0
+}
+
+func tokenCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "create" {
+		fmt.Fprintln(stderr, "usage: memxplore token create [options]")
+		return 2
+	}
+	flags := flag.NewFlagSet("token create", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	db := flags.String("db", defaultDB, "SQLite database path")
+	id := flags.String("id", "", "token identifier")
+	principal := flags.String("principal", "api-client", "principal identifier")
+	namespace := flags.String("namespace", "local", "namespace")
+	owners := flags.String("owners", "local", "comma-separated private owners")
+	scopes := flags.String("scopes", "memory:read,memory:write", "comma-separated scopes")
+	expires := flags.String("expires", "", "optional RFC3339 expiry")
+	allowShared := flags.Bool("allow-shared", false, "allow shared memory")
+	allowPublic := flags.Bool("allow-public", false, "allow public memory")
+	if err := flags.Parse(args[1:]); err != nil {
+		return 2
+	}
+	now := time.Now().UTC()
+	var expiresAt *time.Time
+	if *expires != "" {
+		parsed, err := time.Parse(time.RFC3339, *expires)
+		if err != nil {
+			return cliError(stderr, fmt.Errorf("parse --expires: %w", err))
+		}
+		expiresAt = &parsed
+	}
+	tokenID := *id
+	if tokenID == "" {
+		tokenID = "token-" + strconv.FormatInt(now.UnixNano(), 36)
+	}
+	store, err := sqlite.Open(ctx, *db, sqlite.DefaultOptions())
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	defer store.Close()
+	spec := auth.TokenSpec{
+		ID: domain.ID(tokenID), PrincipalID: domain.ID(*principal), Namespace: domain.ID(*namespace),
+		PrivateOwners: domainIDs(splitCSV(*owners)), Scopes: authScopes(splitCSV(*scopes)),
+		AllowShared: *allowShared, AllowPublic: *allowPublic, ExpiresAt: expiresAt, CreatedAt: now,
+	}
+	raw, err := store.CreateAPIToken(ctx, spec)
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	return writeCLIJSON(stdout, stderr, map[string]any{"id": spec.ID, "token": raw, "warning": "save this token now; only its SHA-256 digest is stored"})
+}
+
+type remoteFlags struct {
+	url   string
+	token string
+}
+
+func addRemoteFlags(flags *flag.FlagSet, config *remoteFlags) {
+	flags.StringVar(&config.url, "url", defaultAPIURL, "daemon base URL")
+	flags.StringVar(&config.token, "token", "", "explicit bearer token")
+}
+
+func remoteClient(config remoteFlags) (*sdk.Client, error) {
+	options := []sdk.Option{}
+	if config.token != "" {
+		options = append(options, sdk.WithBearerToken(config.token))
+	}
+	return sdk.NewClient(config.url, options...)
+}
+
+func rememberCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("remember", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	var remote remoteFlags
+	addRemoteFlags(flags, &remote)
+	owner := flags.String("owner", "local", "memory owner")
+	subject := flags.String("subject", "local", "data subject")
+	contextID := flags.String("context", "", "context or task identifier")
+	function := flags.String("function", "factual", "factual, experiential, or working")
+	strategy := flags.String("strategy", "generator-free", "generator-free or assisted")
+	source := flags.String("source", "cli", "source kind")
+	idempotency := flags.String("idempotency-key", "", "caller-stable retry key")
+	textValue := flags.String("text", "", "evidence text")
+	wait := flags.Int("wait", 30000, "milliseconds to wait for terminal job state")
+	ttl := flags.Int64("working-ttl", 0, "working-memory TTL in seconds")
+	global := flags.Bool("working-global", false, "opt working memory into global recall")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if strings.TrimSpace(*textValue) == "" {
+		return cliError(stderr, fmt.Errorf("--text is required"))
+	}
+	key := *idempotency
+	if key == "" {
+		key = "cli-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	client, err := remoteClient(remote)
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	result, err := client.Remember(ctx, sdk.RememberRequest{
+		IdempotencyKey: key, Owner: sdk.ID(*owner), Subject: sdk.ID(*subject), Context: sdk.ID(*contextID),
+		SourceKind: *source, Content: sdk.TextContent(*textValue), Function: *function, Strategy: *strategy,
+		WorkingTTLSeconds: *ttl, WorkingGlobalRecall: *global, WaitMilliseconds: *wait,
+	})
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	return writeCLIJSON(stdout, stderr, result)
+}
+
+func recallCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("recall", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	var remote remoteFlags
+	addRemoteFlags(flags, &remote)
+	owner := flags.String("owner", "local", "memory owner")
+	subject := flags.String("subject", "local", "data subject")
+	contextID := flags.String("context", "", "context or task identifier")
+	query := flags.String("query", "", "retrieval query")
+	mode := flags.String("mode", "auto", "auto, lexical, semantic, or hybrid")
+	functions := flags.String("functions", "", "optional comma-separated memory functions")
+	tokenBudget := flags.Int("token-budget", 2048, "maximum estimated evidence tokens")
+	candidateLimit := flags.Int("candidate-limit", 20, "maximum candidates before budgeting")
+	global := flags.Bool("include-global-working", false, "include explicitly global working memory")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if strings.TrimSpace(*query) == "" {
+		return cliError(stderr, fmt.Errorf("--query is required"))
+	}
+	client, err := remoteClient(remote)
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	result, err := client.Recall(ctx, sdk.RecallRequest{
+		Owner: sdk.ID(*owner), Subject: sdk.ID(*subject), Context: sdk.ID(*contextID), Query: *query,
+		Functions: splitCSV(*functions), Mode: *mode, TokenBudget: *tokenBudget, CandidateLimit: *candidateLimit,
+		IncludeGlobalWorking: *global,
+	})
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	return writeCLIJSON(stdout, stderr, result)
+}
+
+func jobCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("job", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	var remote remoteFlags
+	addRemoteFlags(flags, &remote)
+	id := flags.String("id", "", "job identifier")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if *id == "" {
+		return cliError(stderr, fmt.Errorf("--id is required"))
+	}
+	client, err := remoteClient(remote)
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	result, err := client.Job(ctx, sdk.ID(*id))
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	return writeCLIJSON(stdout, stderr, result)
+}
+
+func lifecycleCommand(ctx context.Context, action string, args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet(action, flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	var remote remoteFlags
+	addRemoteFlags(flags, &remote)
+	id := flags.String("id", "", "memory identifier")
+	confirm := flags.Bool("confirm", false, "confirm irreversible purge")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if *id == "" {
+		return cliError(stderr, fmt.Errorf("--id is required"))
+	}
+	if action == "purge" && !*confirm {
+		return cliError(stderr, fmt.Errorf("purge is irreversible; repeat with --confirm"))
+	}
+	client, err := remoteClient(remote)
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	var result any
+	switch action {
+	case "archive":
+		result, err = client.Archive(ctx, sdk.ID(*id))
+	case "forget":
+		result, err = client.Forget(ctx, sdk.ID(*id))
+	case "purge":
+		result, err = client.Purge(ctx, sdk.ID(*id))
+	}
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	return writeCLIJSON(stdout, stderr, result)
+}
+
+func ingestCommand(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "codex" {
+		fmt.Fprintln(stderr, "usage: memxplore ingest codex [options]")
+		return 2
+	}
+	flags := flag.NewFlagSet("ingest codex", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	var remote remoteFlags
+	addRemoteFlags(flags, &remote)
+	file := flags.String("file", "-", "Codex JSONL file, or - for stdin")
+	owner := flags.String("owner", "local", "memory owner")
+	subject := flags.String("subject", "local", "data subject")
+	function := flags.String("function", "factual", "memory function")
+	strategy := flags.String("strategy", "generator-free", "formation strategy")
+	wait := flags.Int("wait", 0, "milliseconds to wait per event")
+	if err := flags.Parse(args[1:]); err != nil {
+		return 2
+	}
+	input := stdin
+	var opened *os.File
+	if *file != "-" {
+		var err error
+		opened, err = os.Open(*file)
+		if err != nil {
+			return cliError(stderr, err)
+		}
+		defer opened.Close()
+		input = opened
+	}
+	client, err := remoteClient(remote)
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	results := make([]sdk.RememberResponse, 0)
+	scanner := bufio.NewScanner(input)
+	scanner.Buffer(make([]byte, 64*1024), 4<<20)
+	for line := 1; scanner.Scan(); line++ {
+		if len(strings.TrimSpace(scanner.Text())) == 0 {
+			continue
+		}
+		event, err := agentevent.ParseCodexJSON(scanner.Bytes(), domain.ID(*owner), domain.ID(*subject))
+		if err != nil {
+			return cliError(stderr, fmt.Errorf("line %d: %w", line, err))
+		}
+		var publicEvent sdk.AgentEvent
+		encoded, _ := json.Marshal(event)
+		if err := json.Unmarshal(encoded, &publicEvent); err != nil {
+			return cliError(stderr, err)
+		}
+		result, err := client.IngestAgentEvent(ctx, sdk.AgentEventRequest{
+			Event: publicEvent, Function: *function, Strategy: *strategy,
+			WaitMilliseconds: *wait,
+		})
+		if err != nil {
+			return cliError(stderr, fmt.Errorf("line %d: %w", line, err))
+		}
+		results = append(results, result)
+	}
+	if err := scanner.Err(); err != nil {
+		return cliError(stderr, err)
+	}
+	return writeCLIJSON(stdout, stderr, map[string]any{"accepted": len(results), "results": results})
+}
+
+func listenIsLoopback(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func splitCSV(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
+
+func domainIDs(values []string) []domain.ID {
+	result := make([]domain.ID, len(values))
+	for index, value := range values {
+		result[index] = domain.ID(value)
+	}
+	return result
+}
+
+func authScopes(values []string) []auth.Scope {
+	result := make([]auth.Scope, len(values))
+	for index, value := range values {
+		result[index] = auth.Scope(value)
+	}
+	return result
+}
+
+func writeCLIJSON(stdout, stderr io.Writer, value any) int {
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(value); err != nil {
+		return cliError(stderr, err)
+	}
+	return 0
+}
+
+func cliError(stderr io.Writer, err error) int {
+	fmt.Fprintf(stderr, "memxplore: %v\n", err)
+	return 1
+}
+
+func printUsage(writer io.Writer) {
+	fmt.Fprintln(writer, "MemXplore - executable agent-memory reference implementation and research workbench")
+	fmt.Fprintln(writer)
+	fmt.Fprintln(writer, "Usage: memxplore <command> [options]")
+	fmt.Fprintln(writer)
+	fmt.Fprintln(writer, "Commands:")
+	fmt.Fprintln(writer, "  serve       Run the durable HTTP daemon (loopback by default)")
+	fmt.Fprintln(writer, "  mcp         Serve MCP JSON-RPC over stdin/stdout")
+	fmt.Fprintln(writer, "  token       Create scoped daemon credentials")
+	fmt.Fprintln(writer, "  remember    Capture evidence and form memory")
+	fmt.Fprintln(writer, "  recall      Retrieve a structured RecallBundle")
+	fmt.Fprintln(writer, "  job         Read durable job state")
+	fmt.Fprintln(writer, "  archive     Archive memory")
+	fmt.Fprintln(writer, "  forget      Logically forget memory")
+	fmt.Fprintln(writer, "  purge       Irreversibly purge memory with --confirm")
+	fmt.Fprintln(writer, "  ingest      Ingest opt-in agent adapter data")
+	fmt.Fprintln(writer, "  version     Print program and schema versions")
+	fmt.Fprintln(writer, "  help        Show this help")
 }

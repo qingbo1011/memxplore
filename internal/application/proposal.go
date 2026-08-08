@@ -40,15 +40,21 @@ type Proposal struct {
 // Validate rejects unauditable proposals at the application boundary.
 func (p Proposal) Validate() error {
 	strategyDigest, hashErr := hex.DecodeString(p.StrategyHash)
-	if p.ID == "" || p.Namespace == "" || len(p.ObservationIDs) == 0 || p.StrategyID == "" || hashErr != nil || len(strategyDigest) != 32 || p.CreatedAt.IsZero() {
+	if p.ID == "" || p.Namespace == "" || p.StrategyID == "" || hashErr != nil || len(strategyDigest) != 32 || p.CreatedAt.IsZero() {
 		return fmt.Errorf("proposal identity, evidence, strategy, hash, and timestamp are required")
 	}
 	switch p.Kind {
 	case ProposalCreate:
+		if len(p.ObservationIDs) == 0 {
+			return fmt.Errorf("create proposal requires observation evidence")
+		}
 		if p.TargetID != "" {
 			return fmt.Errorf("create proposal cannot name an existing target")
 		}
 	case ProposalUpdate, ProposalArchive, ProposalForget, ProposalConsolidate:
+		if (p.Kind == ProposalUpdate || p.Kind == ProposalConsolidate) && len(p.ObservationIDs) == 0 {
+			return fmt.Errorf("%s proposal requires observation evidence", p.Kind)
+		}
 		if p.TargetID == "" {
 			return fmt.Errorf("%s proposal requires a target", p.Kind)
 		}

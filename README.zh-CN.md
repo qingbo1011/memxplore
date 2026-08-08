@@ -38,16 +38,29 @@ CLI / REST / MCP / Go SDK / AgentEvent adapters
 
 唯一的 `memxplore serve` daemon 负责 SQLite、durable jobs、provider 调用和审计状态。大型或非文本内容通过 content-addressed artifact store 引用，不直接塞进 memory record。
 
-## 当前开发入口
+## 快速开始
 
-需要 Go 1.26 或更高版本。
+需要 Go 1.26.x。先启动 generator-free、lexical baseline：
 
 ```sh
 go test ./...
-go run ./cmd/memxplore version --json
+go run ./cmd/memxplore serve --db ./memxplore.sqlite
 ```
 
-完整的 serve/remember/recall 使用方式会在相应里程碑完成后写入文档；本 README 不提前宣传尚未实现的命令。
+在另一个终端写入证据并召回：
+
+```sh
+go run ./cmd/memxplore remember \
+  --owner local --subject local --context demo \
+  --function factual --idempotency-key quickstart-1 \
+  --text "Ada prefers concise release notes"
+
+go run ./cmd/memxplore recall \
+  --owner local --subject local --context demo \
+  --mode lexical --query "release notes"
+```
+
+Loopback HTTP 默认可免 token。绑定非 loopback 地址前，必须先用 `memxplore token create` 创建 scoped token；daemon 只保存 SHA-256 摘要。Ollama 必须显式启用，MemXplore 不会自动下载模型。详见 [API、CLI、MCP、SDK 与 AgentEvent 使用说明](docs/api.zh-CN.md)和 [Provider 配置](docs/providers.md)。
 
 ## 研究诚信
 
@@ -71,6 +84,7 @@ go run ./cmd/memxplore version --json
 - [Provider 配置](docs/providers.md)
 - [检索契约](docs/retrieval.md)
 - [记忆生命周期](docs/lifecycle.md)
+- [API、CLI、MCP、SDK 与 AgentEvent](docs/api.zh-CN.md)
 - [路线图](docs/ROADMAP.md)
 - [贡献指南](CONTRIBUTING.md)
 - [第三方声明](THIRD_PARTY_NOTICES.md)

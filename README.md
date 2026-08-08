@@ -38,16 +38,29 @@ CLI / REST / MCP / Go SDK / AgentEvent adapters
 
 The single `memxplore serve` daemon owns SQLite, durable jobs, provider calls, and audit state. Large or non-text content is referenced through a content-addressed artifact store rather than embedded in memory records.
 
-## Current development entry point
+## Quickstart
 
-Go 1.26 or newer is required.
+Go 1.26.x is required. Start the generator-free lexical baseline:
 
 ```sh
 go test ./...
-go run ./cmd/memxplore version --json
+go run ./cmd/memxplore serve --db ./memxplore.sqlite
 ```
 
-The complete serve/remember/recall workflow will be documented when its milestone lands; this README deliberately does not advertise unfinished commands.
+In another shell, capture evidence and recall it:
+
+```sh
+go run ./cmd/memxplore remember \
+  --owner local --subject local --context demo \
+  --function factual --idempotency-key quickstart-1 \
+  --text "Ada prefers concise release notes"
+
+go run ./cmd/memxplore recall \
+  --owner local --subject local --context demo \
+  --mode lexical --query "release notes"
+```
+
+Loopback HTTP is tokenless by default. Before binding a non-loopback address, create a scoped token with `memxplore token create`; the daemon stores only its SHA-256 digest. Ollama is opt-in and never auto-pulls models. See [API, CLI, MCP, SDK, and AgentEvent usage](docs/api.md) and [provider configuration](docs/providers.md).
 
 ## Research integrity
 
@@ -71,6 +84,7 @@ Security issues should be reported according to [SECURITY.md](SECURITY.md).
 - [Provider configuration](docs/providers.md)
 - [Retrieval contract](docs/retrieval.md)
 - [Memory lifecycle](docs/lifecycle.md)
+- [API, CLI, MCP, SDK, and AgentEvent](docs/api.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Contributing](CONTRIBUTING.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)

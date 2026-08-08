@@ -15,8 +15,12 @@ var (
 	ErrNoJob = errors.New("no claimable job")
 	// ErrJobNotFound indicates that a referenced job does not exist.
 	ErrJobNotFound = errors.New("job not found")
+	// ErrNotFound is used by application repositories for missing resources.
+	ErrNotFound = errors.New("resource not found")
 	// ErrLeaseLost indicates a stale or foreign worker tried to finish a job.
 	ErrLeaseLost = errors.New("job lease lost")
+	// ErrInvalidFormationJob indicates an incomplete durable formation payload.
+	ErrInvalidFormationJob = errors.New("invalid formation job")
 )
 
 // JobState is the durable state machine persisted across daemon restarts.

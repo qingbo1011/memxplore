@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/qingbo1011/memxplore/internal/application"
 	"github.com/qingbo1011/memxplore/internal/domain"
 )
 
@@ -126,16 +127,7 @@ func encodeVersion(version domain.MemoryVersion) (taxonomy, payload, provenance,
 }
 
 func payloadPlainText(payload domain.MemoryPayload) string {
-	switch {
-	case payload.Factual != nil:
-		return payload.Factual.Predicate + "\n" + payload.Factual.Object.PlainText()
-	case payload.Experiential != nil:
-		return payload.Experiential.Lesson.PlainText()
-	case payload.Working != nil:
-		return payload.Working.Goal.PlainText() + "\n" + payload.Working.State.PlainText()
-	default:
-		return ""
-	}
+	return application.MemoryText(payload)
 }
 
 func formatTime(value time.Time) string {

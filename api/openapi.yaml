@@ -1,0 +1,448 @@
+openapi: 3.1.0
+info:
+  title: MemXplore API
+  version: 0.1.0
+  license:
+    name: Apache License 2.0
+    identifier: Apache-2.0
+  description: >-
+    Provider-neutral agent-memory protocol v1. Recall returns structured evidence and
+    provenance, never a generated answer. Formation is durable and may be asynchronous.
+servers:
+  - url: http://127.0.0.1:7878
+    description: Default loopback daemon
+security:
+  - bearerAuth: []
+paths:
+  /v1/health:
+    get:
+      operationId: getHealth
+      summary: Liveness check
+      security: []
+      responses:
+        "200":
+          description: Daemon is live
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { const: ok }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /v1/version:
+    get:
+      operationId: getVersion
+      summary: Read protocol and schema versions
+      responses:
+        "200":
+          description: Compatibility metadata
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Version" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/remember:
+    post:
+      operationId: remember
+      summary: Capture evidence and enqueue durable formation
+      description: Requires memory:write. Idempotency is scoped to the authenticated namespace.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RememberRequest" }
+      responses:
+        "200":
+          description: Formation reached terminal state within the requested wait
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RememberResponse" }
+        "202":
+          description: Durable job accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RememberResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/recall:
+    post:
+      operationId: recall
+      summary: Recall structured evidence
+      description: Requires memory:read. The response is a RecallBundle, not an answer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RecallRequest" }
+      responses:
+        "200":
+          description: Provenance-bearing token-budgeted evidence
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecallBundle" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/jobs/{id}:
+    get:
+      operationId: getJob
+      summary: Read durable formation job state
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Job state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/memories/{id}/archive:
+    post:
+      operationId: archiveMemory
+      summary: Archive memory from normal recall
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200": { $ref: "#/components/responses/LifecycleApplied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/memories/{id}/forget:
+    post:
+      operationId: forgetMemory
+      summary: Logically forget memory while retaining audit history
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200": { $ref: "#/components/responses/LifecycleApplied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/memories/{id}:
+    delete:
+      operationId: purgeMemory
+      summary: Irreversibly purge memory and derived content
+      description: Requires memory:purge. The receipt contains no memory content.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Non-content-bearing purge receipt
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PurgeReceipt" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/tokens:
+    post:
+      operationId: createToken
+      summary: Create one digest-only scoped daemon credential
+      description: Requires admin. Raw token material is returned exactly once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TokenCreateRequest" }
+      responses:
+        "201":
+          description: One-time credential
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenCreateResponse" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/agent-events:
+    post:
+      operationId: ingestAgentEvent
+      summary: Opt a generic AgentEvent v1 into formation
+      description: Requires memory:write and an explicitly enabled daemon ingestion route.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentEventRequest" }
+      responses:
+        "202":
+          description: Durable event formation accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RememberResponse" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/mcp:
+    post:
+      operationId: callMCP
+      summary: MCP Streamable HTTP JSON-RPC endpoint
+      description: >-
+        Supports stateless MCP 2026-07-28 server/discover and tools, plus legacy
+        2025-11-25 and 2025-06-18 initialize negotiation. Latest clients send
+        MCP-Protocol-Version, Mcp-Method, and for tools/call Mcp-Name headers.
+      parameters:
+        - in: header
+          name: MCP-Protocol-Version
+          schema: { type: string }
+        - in: header
+          name: Mcp-Method
+          schema: { type: string }
+        - in: header
+          name: Mcp-Name
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/JSONRPCRequest" }
+      responses:
+        "200":
+          description: JSON-RPC response
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JSONRPCResponse" }
+        "202": { description: Notification accepted without response body }
+        "400": { $ref: "#/components/responses/BadRequest" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    ID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 255 }
+  responses:
+    BadRequest:
+      description: Invalid schema or domain request
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    Unauthorized:
+      description: Missing or invalid bearer token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    Forbidden:
+      description: Authenticated principal lacks scope or owner access
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    NotFound:
+      description: Resource not found in the authenticated namespace
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    LifecycleApplied:
+      description: Auditable lifecycle transition
+      content:
+        application/json:
+          schema: { type: object, additionalProperties: true }
+  schemas:
+    Version:
+      type: object
+      required: [program, version, protocol_version, storage_schema_version, export_schema_version]
+      properties:
+        program: { const: memxplore }
+        version: { type: string }
+        protocol_version: { const: v1 }
+        storage_schema_version: { type: integer }
+        export_schema_version: { type: integer }
+    Content:
+      type: object
+      additionalProperties: false
+      required: [parts]
+      properties:
+        parts:
+          type: array
+          minItems: 1
+          items:
+            oneOf:
+              - type: object
+                additionalProperties: false
+                required: [kind, text]
+                properties:
+                  kind: { const: text }
+                  text: { type: string, minLength: 1 }
+              - type: object
+                additionalProperties: false
+                required: [kind, artifact]
+                properties:
+                  kind: { const: artifact }
+                  artifact:
+                    type: object
+                    additionalProperties: false
+                    required: [digest, media_type, size]
+                    properties:
+                      digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
+                      media_type: { type: string }
+                      size: { type: integer, minimum: 0 }
+    RememberRequest:
+      type: object
+      additionalProperties: false
+      required: [idempotency_key, owner, subject, content, function]
+      properties:
+        observation_id: { type: string }
+        idempotency_key: { type: string, minLength: 1 }
+        owner: { type: string, minLength: 1 }
+        subject: { type: string, minLength: 1 }
+        context: { type: string }
+        visibility: { enum: [private, shared, public] }
+        source_kind: { type: string, default: api }
+        source_reference: { type: string }
+        content: { $ref: "#/components/schemas/Content" }
+        evidence_class: { enum: [untrusted, asserted, verified, policy] }
+        policy_authority: { type: string }
+        captured_at: { type: string, format: date-time }
+        metadata: { type: object, additionalProperties: { type: string } }
+        function: { enum: [factual, experiential, working] }
+        strategy: { enum: [generator-free, assisted], default: generator-free }
+        working_ttl_seconds: { type: integer, minimum: 1, maximum: 2592000 }
+        working_global_recall: { type: boolean, default: false }
+        wait_milliseconds: { type: integer, minimum: 0, maximum: 30000 }
+    RememberResponse:
+      type: object
+      required: [job]
+      properties:
+        job: { $ref: "#/components/schemas/Job" }
+    Job:
+      type: object
+      required: [id, namespace, kind, state, idempotency_key, attempts, available_at, created_at, updated_at]
+      properties:
+        id: { type: string }
+        namespace: { type: string }
+        kind: { type: string }
+        state: { enum: [queued, running, succeeded, failed, canceled] }
+        idempotency_key: { type: string }
+        payload: {}
+        result: {}
+        error_code: { type: string }
+        error_message: { type: string }
+        attempts: { type: integer }
+        available_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    RecallRequest:
+      type: object
+      additionalProperties: false
+      required: [owner, subject, query]
+      properties:
+        owner: { type: string }
+        subject: { type: string }
+        context: { type: string }
+        query: { type: string, minLength: 1 }
+        functions:
+          type: array
+          items: { enum: [factual, experiential, working] }
+        mode: { enum: [auto, lexical, semantic, hybrid], default: auto }
+        valid_at: { type: string, format: date-time }
+        system_at: { type: string, format: date-time }
+        token_budget: { type: integer, minimum: 1 }
+        candidate_limit: { type: integer, minimum: 1, maximum: 250 }
+        include_global_working: { type: boolean, default: false }
+    RecallBundle:
+      type: object
+      description: Structured evidence only; it is not a generated answer.
+      required: [query, mode, items, groups, trace]
+      properties:
+        query: { type: string }
+        mode: { enum: [lexical, semantic, hybrid] }
+        fallback_reason: { type: string }
+        items:
+          type: array
+          items:
+            type: object
+            required: [memory_id, version_id, function, payload, provenance, estimated_tokens, score]
+            properties:
+              memory_id: { type: string }
+              version_id: { type: string }
+              function: { enum: [factual, experiential, working] }
+              conflict_group: { type: string }
+              payload: { type: object }
+              provenance: { type: array, items: { type: object } }
+              estimated_tokens: { type: integer }
+              score: { type: object }
+        groups: { type: array, items: { type: object } }
+        trace: { type: object }
+    TokenCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [principal_id, private_owners, scopes]
+      properties:
+        id: { type: string }
+        principal_id: { type: string }
+        private_owners: { type: array, minItems: 1, items: { type: string } }
+        scopes:
+          type: array
+          minItems: 1
+          items: { enum: ["memory:read", "memory:write", "memory:purge", admin] }
+        allow_shared: { type: boolean }
+        allow_public: { type: boolean }
+        expires_at: { type: string, format: date-time }
+    TokenCreateResponse:
+      type: object
+      required: [id, token]
+      properties:
+        id: { type: string }
+        token: { type: string, pattern: "^mx_[0-9a-f]{64}$" }
+    PurgeReceipt:
+      type: object
+      required: [id, namespace, target_id, actor, versions_deleted, artifacts_detached, purged_at]
+      properties:
+        id: { type: string }
+        namespace: { type: string }
+        target_id: { type: string }
+        actor: { type: string }
+        versions_deleted: { type: integer }
+        artifacts_detached: { type: integer }
+        purged_at: { type: string, format: date-time }
+    AgentEventRequest:
+      type: object
+      additionalProperties: false
+      required: [event, function]
+      properties:
+        event:
+          type: object
+          additionalProperties: false
+          required: [schema_version, id, source, type, owner, subject, content, occurred_at]
+          properties:
+            schema_version: { const: v1 }
+            id: { type: string }
+            source: { type: string }
+            type: { enum: [message, tool_result, outcome, task_state] }
+            owner: { type: string }
+            subject: { type: string }
+            context: { type: string }
+            content: { $ref: "#/components/schemas/Content" }
+            occurred_at: { type: string, format: date-time }
+            metadata: { type: object, additionalProperties: { type: string } }
+        function: { enum: [factual, experiential, working] }
+        strategy: { enum: [generator-free, assisted] }
+        wait_milliseconds: { type: integer, minimum: 0, maximum: 30000 }
+    JSONRPCRequest:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { const: "2.0" }
+        id: { oneOf: [{ type: string }, { type: integer }] }
+        method: { type: string }
+        params: { type: object }
+    JSONRPCResponse:
+      type: object
+      required: [jsonrpc, id]
+      properties:
+        jsonrpc: { const: "2.0" }
+        id: { oneOf: [{ type: string }, { type: integer }, { type: "null" }] }
+        result: {}
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: integer }
+            message: { type: string }
+            data: {}
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details: {}

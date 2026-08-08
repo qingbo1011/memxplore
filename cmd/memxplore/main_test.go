@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -19,7 +21,7 @@ func TestVersionJSON(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("decode output: %v", err)
 	}
-	if got.Program != "memxplore" || got.Protocol != "v1" || got.StorageSchema != 3 {
+	if got.Program != "memxplore" || got.Protocol != "v1" || got.StorageSchema != 4 {
 		t.Fatalf("unexpected version output: %+v", got)
 	}
 }
@@ -33,5 +35,72 @@ func TestUnknownCommand(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "unknown command") {
 		t.Fatalf("stderr %q does not explain the failure", stderr.String())
+	}
+}
+
+func TestTokenCreateReturnsRawTokenOnce(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	database := filepath.Join(t.TempDir(), "token.sqlite")
+	code := runContext(context.Background(), []string{
+		"token", "create", "--db", database, "--id", "token-test", "--principal", "reader",
+		"--owners", "owner-a", "--scopes", "memory:read",
+	}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, stderr.String())
+	}
+	var response struct {
+		ID    string `json:"id"`
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.ID != "token-test" || !strings.HasPrefix(response.Token, "mx_") || len(response.Token) != 67 {
+		t.Fatalf("response=%+v", response)
+	}
+}
+
+func TestServeRefusesNonLoopbackWithoutToken(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	database := filepath.Join(t.TempDir(), "serve.sqlite")
+	code := runContext(context.Background(), []string{
+		"serve", "--db", database, "--listen", "0.0.0.0:7878",
+	}, strings.NewReader(""), &stdout, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "refusing non-loopback") {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestMCPCommandServesStdio(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	database := filepath.Join(t.TempDir(), "mcp.sqlite")
+	input := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}` + "\n")
+	code := runContext(context.Background(), []string{"mcp", "--db", database}, input, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "memxplore_recall") || strings.Contains(stdout.String(), "listening") {
+		t.Fatalf("stdout=%s", stdout.String())
+	}
+}
+
+func TestPurgeRequiresExplicitConfirmation(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runContext(context.Background(), []string{"purge", "--id", "memory-a"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "irreversible") {
+		t.Fatalf("code=%d stderr=%s", code, stderr.String())
+	}
+}
+
+func TestListenIsLoopback(t *testing.T) {
+	for _, address := range []string{"127.0.0.1:7878", "[::1]:7878", "localhost:7878"} {
+		if !listenIsLoopback(address) {
+			t.Fatalf("%s should be loopback", address)
+		}
+	}
+	for _, address := range []string{"0.0.0.0:7878", "[::]:7878", "bad"} {
+		if listenIsLoopback(address) {
+			t.Fatalf("%s should not be loopback", address)
+		}
 	}
 }

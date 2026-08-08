@@ -19,12 +19,12 @@ body{font-family:ui-sans-serif,system-ui,sans-serif;max-width:1100px;margin:0 au
 <p class="meta"><code>{{.Manifest.RunID}}</code> · {{.Manifest.Benchmark}} · adapter {{.Manifest.Adapter}}</p>
 <p>Dataset <strong>{{.Manifest.Dataset.Name}}</strong> at <code>{{.Manifest.Dataset.Revision}}</code>, SHA-256 <code>{{.Manifest.Dataset.SHA256}}</code>. This report makes no leaderboard claim.</p>
 <h2>Retrieval and system metrics</h2>
-<table><thead><tr><th>Variant</th><th>Cases</th><th>Hit@K</th><th>Recall@K</th><th>MRR</th><th>Failures</th><th>Mean ms</th><th>P95 ms</th><th>Calls</th><th>Cost USD</th></tr></thead><tbody>
-{{range .Rows}}<tr><td>{{.ID}}</td><td>{{.Metrics.Cases}}</td><td>{{printf "%.4f" .Metrics.HitAtK}}</td><td>{{printf "%.4f" .Metrics.RecallAtK}}</td><td>{{printf "%.4f" .Metrics.MRR}}</td><td>{{.Metrics.Failures}}</td><td>{{printf "%.2f" .Metrics.LatencyMeanMS}}</td><td>{{printf "%.2f" .Metrics.LatencyP95MS}}</td><td>{{.Metrics.ProviderCalls}}</td><td>{{printf "%.6f" .Metrics.CostUSD}}</td></tr>{{end}}
+<table><thead><tr><th>Variant</th><th>Cases</th><th>Hit@K</th><th>Recall@K</th><th>MRR</th><th>Failures</th><th>Mean ms</th><th>P95 ms</th><th>Retrieved tokens</th><th>Calls</th><th>Cost USD</th></tr></thead><tbody>
+{{range .Rows}}<tr><td>{{.ID}}</td><td>{{.Metrics.Cases}}</td><td>{{printf "%.4f" .Metrics.HitAtK}}</td><td>{{printf "%.4f" .Metrics.RecallAtK}}</td><td>{{printf "%.4f" .Metrics.MRR}}</td><td>{{.Metrics.Failures}}</td><td>{{printf "%.2f" .Metrics.LatencyMeanMS}}</td><td>{{printf "%.2f" .Metrics.LatencyP95MS}}</td><td>{{.Metrics.RetrievedTokens}}</td><td>{{.Metrics.ProviderCalls}}</td><td>{{printf "%.6f" .Metrics.CostUSD}}</td></tr>{{end}}
 </tbody></table>
 {{if .Metrics.Ablations}}<h2>Paired ablations</h2><table><thead><tr><th>Pair</th><th>Recall@K delta</th><th>MRR delta</th><th>Mean latency delta ms</th></tr></thead><tbody>{{range .Metrics.Ablations}}<tr><td>{{.Variant}} vs {{.Baseline}}</td><td>{{printf "%+.4f" .RecallAtKDelta}}</td><td>{{printf "%+.4f" .MRRDelta}}</td><td>{{printf "%+.2f" .LatencyMSDelta}}</td></tr>{{end}}</tbody></table>{{end}}
 {{if .Checks}}<h2>Lifecycle checks</h2><ul>{{range .Checks}}<li class="{{if .Passed}}pass{{else}}fail{{end}}">{{.Name}}: {{if .Passed}}passed{{else}}failed{{end}}</li>{{end}}</ul>{{end}}
-<h2>Run facts</h2><ul><li>Started: {{.Manifest.StartedAt}}</li><li>Completed: {{.Manifest.CompletedAt}}</li><li>Go: {{.Manifest.Runtime.GoVersion}} {{.Manifest.Runtime.GOOS}}/{{.Manifest.Runtime.GOARCH}}</li><li>Indexed units: {{.Metrics.IndexedUnits}}</li><li>Ingest latency: {{printf "%.2f" .Metrics.IngestLatencyMS}} ms</li></ul>
+<h2>Run facts</h2><ul><li>Started: {{.Manifest.StartedAt}}</li><li>Completed: {{.Manifest.CompletedAt}}</li><li>Go: {{.Manifest.Runtime.GoVersion}} {{.Manifest.Runtime.GOOS}}/{{.Manifest.Runtime.GOARCH}}</li><li>Indexed units: {{.Metrics.IndexedUnits}}</li><li>Estimated ingest tokens: {{.Metrics.IngestTokens}}</li><li>Ingest latency: {{printf "%.2f" .Metrics.IngestLatencyMS}} ms</li></ul>
 {{if .Manifest.Limitations}}<h2>Limitations</h2><ul>{{range .Manifest.Limitations}}<li>{{.}}</li>{{end}}</ul>{{end}}
 </body></html>`))
 

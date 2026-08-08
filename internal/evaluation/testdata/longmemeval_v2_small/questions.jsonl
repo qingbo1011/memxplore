@@ -1,0 +1,2 @@
+{"id":"web-q1","domain":"web","environment":"store","question_type":"workflow_knowledge","question":"How should the item be submitted?","image":null,"answer":"Use the review page.","eval_function":"exact_match"}
+{"id":"web-q2","domain":"web","environment":"store","question_type":"environment_gotchas","question":"What should be checked before submission?","image":null,"answer":"Check the required field.","eval_function":"exact_match"}

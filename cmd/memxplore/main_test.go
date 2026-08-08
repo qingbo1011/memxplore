@@ -92,6 +92,40 @@ func TestPurgeRequiresExplicitConfirmation(t *testing.T) {
 	}
 }
 
+func TestBenchmarkInternalWritesAndVerifiesImmutableRun(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	output := t.TempDir()
+	code := runContext(context.Background(), []string{
+		"benchmark", "internal", "--output", output, "--run-id", "cli-internal-test", "--seed", "17",
+	}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, stderr.String())
+	}
+	var result struct {
+		RunID string `json:"run_id"`
+		Path  string `json:"path"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.RunID != "cli-internal-test" || result.Path != filepath.Join(output, result.RunID) {
+		t.Fatalf("result=%+v", result)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"eval", "verify", "--run", result.Path}, &stdout, &stderr); code != 0 {
+		t.Fatalf("verify code=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"valid": true`) {
+		t.Fatalf("stdout=%s", stdout.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"benchmark", "internal", "--output", output, "--run-id", "cli-internal-test"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "already exists") {
+		t.Fatalf("duplicate code=%d stderr=%s", code, stderr.String())
+	}
+}
+
 func TestListenIsLoopback(t *testing.T) {
 	for _, address := range []string{"127.0.0.1:7878", "[::1]:7878", "localhost:7878"} {
 		if !listenIsLoopback(address) {

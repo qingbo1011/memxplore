@@ -47,6 +47,7 @@ func scoreVariant(predictions []Prediction, topK int) VariantMetrics {
 		result.OutputTokens += prediction.OutputTokens
 		result.ProviderCalls += prediction.ProviderCalls
 		result.CostUSD += prediction.CostUSD
+		result.RetrievedTokens += prediction.RetrievedTokens
 		if prediction.Failure != nil {
 			result.Failures++
 		}

@@ -312,6 +312,7 @@ func (h *internalHarness) recall(ctx context.Context, caseID, category string, s
 		CaseID: caseID, Category: category, Variant: "lexical", Query: query,
 		ExpectedReferences: append([]string(nil), expected...), LatencyMS: latency,
 		InputTokens: estimateTokens(query), TraceIDs: []string{string(bundle.Trace.ID)},
+		RetrievedTokens: bundle.Trace.TokensUsed,
 	}
 	if err != nil {
 		prediction.Failure = &Failure{Code: "recall_failed", Message: err.Error()}

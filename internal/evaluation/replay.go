@@ -18,6 +18,16 @@ type ReplayResult struct {
 	TokensUsed     int    `json:"tokens_used,omitempty"`
 }
 
+// AdapterTrace records a deterministic dataset-adapter materialization decision.
+type AdapterTrace struct {
+	ID            string   `json:"id"`
+	Adapter       string   `json:"adapter"`
+	CaseID        string   `json:"case_id"`
+	InputIDs      []string `json:"input_ids"`
+	ResolvedIDs   []string `json:"resolved_ids"`
+	DatasetSHA256 string   `json:"dataset_sha256"`
+}
+
 // NewTraceReference embeds and hashes one self-contained trace payload.
 func NewTraceReference(caseID, variant, kind string, value any) (TraceReference, error) {
 	payload, err := json.Marshal(value)
@@ -74,6 +84,20 @@ func ReplayTrace(reference TraceReference) (ReplayResult, error) {
 			return ReplayResult{}, fmt.Errorf("lifecycle trace is incomplete")
 		}
 		return ReplayResult{ID: reference.ID, Kind: reference.Kind}, nil
+	case "adapter":
+		var trace AdapterTrace
+		if err := json.Unmarshal(reference.Payload, &trace); err != nil {
+			return ReplayResult{}, fmt.Errorf("decode adapter trace: %w", err)
+		}
+		if trace.ID != reference.ID || trace.Adapter == "" || trace.CaseID == "" || len(trace.DatasetSHA256) != 64 || len(trace.InputIDs) == 0 || len(trace.InputIDs) != len(trace.ResolvedIDs) {
+			return ReplayResult{}, fmt.Errorf("adapter trace is incomplete")
+		}
+		for index := range trace.InputIDs {
+			if trace.InputIDs[index] == "" || trace.InputIDs[index] != trace.ResolvedIDs[index] {
+				return ReplayResult{}, fmt.Errorf("adapter trace resolution mismatch at index %d", index)
+			}
+		}
+		return ReplayResult{ID: reference.ID, Kind: reference.Kind, CandidateCount: len(trace.InputIDs), SelectedCount: len(trace.ResolvedIDs)}, nil
 	default:
 		return ReplayResult{}, fmt.Errorf("trace kind %q is unsupported", reference.Kind)
 	}

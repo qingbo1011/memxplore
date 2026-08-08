@@ -26,6 +26,7 @@ import (
 	"github.com/qingbo1011/memxplore/internal/buildinfo"
 	"github.com/qingbo1011/memxplore/internal/daemon"
 	"github.com/qingbo1011/memxplore/internal/domain"
+	"github.com/qingbo1011/memxplore/internal/evaluation"
 	"github.com/qingbo1011/memxplore/sdk"
 )
 
@@ -79,6 +80,10 @@ func runContext(ctx context.Context, args []string, stdin io.Reader, stdout, std
 		return lifecycleCommand(ctx, args[0], args[1:], stdout, stderr)
 	case "ingest":
 		return ingestCommand(ctx, args[1:], stdin, stdout, stderr)
+	case "benchmark":
+		return benchmarkCommand(ctx, args[1:], stdout, stderr)
+	case "eval":
+		return evalCommand(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "memxplore: unknown command %q\n", args[0])
 		printUsage(stderr)
@@ -539,6 +544,106 @@ func ingestCommand(ctx context.Context, args []string, stdin io.Reader, stdout, 
 	return writeCLIJSON(stdout, stderr, map[string]any{"accepted": len(results), "results": results})
 }
 
+func benchmarkCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: memxplore benchmark <internal|longmemeval-v1|longmemeval-v2-small> [options]")
+		return 2
+	}
+	var benchmarkRun evaluation.Run
+	var err error
+	switch args[0] {
+	case "internal":
+		flags := flag.NewFlagSet("benchmark internal", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		output := flags.String("output", "runs", "immutable run output root")
+		runID := flags.String("run-id", "", "optional unique run identifier")
+		seed := flags.Int64("seed", 1, "fixture seed recorded in the manifest")
+		workDir := flags.String("work-dir", "", "optional temporary SQLite parent directory")
+		if err := flags.Parse(args[1:]); err != nil {
+			return 2
+		}
+		benchmarkRun, err = evaluation.RunInternal(ctx, evaluation.InternalConfig{RunID: *runID, Seed: *seed, WorkDir: *workDir})
+		if err == nil {
+			return writeBenchmarkRun(*output, benchmarkRun, stdout, stderr)
+		}
+	case "longmemeval-v1":
+		flags := flag.NewFlagSet("benchmark longmemeval-v1", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		output := flags.String("output", "runs", "immutable run output root")
+		dataset := flags.String("dataset", "", "path to longmemeval_s_cleaned.json")
+		revision := flags.String("revision", "", "pinned upstream dataset revision")
+		runID := flags.String("run-id", "", "optional unique run identifier")
+		seed := flags.Int64("seed", 1, "fixture seed recorded in the manifest")
+		limit := flags.Int("limit", 0, "first N cases; 0 requires the full 500-case dataset")
+		topK := flags.Int("top-k", 5, "retrieval cutoff")
+		workDir := flags.String("work-dir", "", "optional temporary SQLite parent directory")
+		if err := flags.Parse(args[1:]); err != nil {
+			return 2
+		}
+		benchmarkRun, err = evaluation.RunLongMemEvalV1(ctx, evaluation.LongMemEvalV1Config{
+			DatasetPath: *dataset, Revision: *revision, RunID: *runID, Seed: *seed, Limit: *limit, TopK: *topK, WorkDir: *workDir,
+		})
+		if err == nil {
+			return writeBenchmarkRun(*output, benchmarkRun, stdout, stderr)
+		}
+	case "longmemeval-v2-small":
+		flags := flag.NewFlagSet("benchmark longmemeval-v2-small", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		output := flags.String("output", "runs", "immutable run output root")
+		dataRoot := flags.String("data-root", "", "directory containing questions.jsonl, trajectories.jsonl, and haystacks")
+		revision := flags.String("revision", "", "pinned upstream dataset revision")
+		runID := flags.String("run-id", "", "optional unique run identifier")
+		seed := flags.Int64("seed", 1, "fixture seed recorded in the manifest")
+		limit := flags.Int("limit", 10, "first N questions; 0 validates all questions")
+		haystackSize := flags.Int("expected-haystack-size", longMemEvalV2SmallHaystackSizeCLI, "required trajectories per Small-tier haystack")
+		if err := flags.Parse(args[1:]); err != nil {
+			return 2
+		}
+		benchmarkRun, err = evaluation.RunLongMemEvalV2Small(evaluation.LongMemEvalV2Config{
+			DataRoot: *dataRoot, Revision: *revision, RunID: *runID, Seed: *seed, Limit: *limit, ExpectedHaystackSize: *haystackSize,
+		})
+		if err == nil {
+			return writeBenchmarkRun(*output, benchmarkRun, stdout, stderr)
+		}
+	default:
+		fmt.Fprintf(stderr, "memxplore: unknown benchmark %q\n", args[0])
+		return 2
+	}
+	return cliError(stderr, err)
+}
+
+const longMemEvalV2SmallHaystackSizeCLI = 100
+
+func writeBenchmarkRun(output string, run evaluation.Run, stdout, stderr io.Writer) int {
+	path, err := evaluation.WriteRun(output, run)
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	return writeCLIJSON(stdout, stderr, map[string]any{
+		"run_id": run.Manifest.RunID, "benchmark": run.Manifest.Benchmark, "path": path, "metrics": run.Metrics,
+	})
+}
+
+func evalCommand(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "verify" {
+		fmt.Fprintln(stderr, "usage: memxplore eval verify --run <directory>")
+		return 2
+	}
+	flags := flag.NewFlagSet("eval verify", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	runDirectory := flags.String("run", "", "immutable run directory")
+	if err := flags.Parse(args[1:]); err != nil {
+		return 2
+	}
+	if *runDirectory == "" {
+		return cliError(stderr, fmt.Errorf("--run is required"))
+	}
+	if err := evaluation.VerifyRun(*runDirectory); err != nil {
+		return cliError(stderr, err)
+	}
+	return writeCLIJSON(stdout, stderr, map[string]any{"run": *runDirectory, "valid": true})
+}
+
 func listenIsLoopback(address string) bool {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
@@ -611,6 +716,8 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  forget      Logically forget memory")
 	fmt.Fprintln(writer, "  purge       Irreversibly purge memory with --confirm")
 	fmt.Fprintln(writer, "  ingest      Ingest opt-in agent adapter data")
+	fmt.Fprintln(writer, "  benchmark   Run deterministic or LongMemEval evaluations")
+	fmt.Fprintln(writer, "  eval        Verify immutable evaluation artifacts")
 	fmt.Fprintln(writer, "  version     Print program and schema versions")
 	fmt.Fprintln(writer, "  help        Show this help")
 }

@@ -89,6 +89,7 @@ type Prediction struct {
 	OutputTokens       int               `json:"output_tokens"`
 	ProviderCalls      int               `json:"provider_calls"`
 	CostUSD            float64           `json:"cost_usd"`
+	RetrievedTokens    int               `json:"retrieved_tokens"`
 	Failure            *Failure          `json:"failure,omitempty"`
 }
 
@@ -126,6 +127,7 @@ type VariantMetrics struct {
 	OutputTokens       int     `json:"output_tokens"`
 	ProviderCalls      int     `json:"provider_calls"`
 	CostUSD            float64 `json:"cost_usd"`
+	RetrievedTokens    int     `json:"retrieved_tokens"`
 }
 
 // Ablation reports paired deltas from a baseline arm.
@@ -145,6 +147,7 @@ type Metrics struct {
 	Ablations       []Ablation                `json:"ablations"`
 	LifecycleChecks map[string]bool           `json:"lifecycle_checks,omitempty"`
 	IndexedUnits    int                       `json:"indexed_units"`
+	IngestTokens    int                       `json:"ingest_tokens"`
 	IngestLatencyMS float64                   `json:"ingest_latency_ms"`
 }
 
@@ -180,7 +183,7 @@ func (r Run) Validate() error {
 	}
 	seenPredictions := make(map[string]struct{}, len(r.Predictions))
 	for _, prediction := range r.Predictions {
-		if prediction.CaseID == "" || prediction.Variant == "" || prediction.Query == "" || prediction.LatencyMS < 0 || prediction.InputTokens < 0 || prediction.OutputTokens < 0 || prediction.ProviderCalls < 0 || prediction.CostUSD < 0 {
+		if prediction.CaseID == "" || prediction.Variant == "" || prediction.Query == "" || prediction.LatencyMS < 0 || prediction.InputTokens < 0 || prediction.OutputTokens < 0 || prediction.ProviderCalls < 0 || prediction.CostUSD < 0 || prediction.RetrievedTokens < 0 {
 			return fmt.Errorf("prediction identity, query, and non-negative system metrics are required")
 		}
 		if _, ok := variantIDs[prediction.Variant]; !ok {

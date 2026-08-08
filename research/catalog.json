@@ -1,0 +1,146 @@
+{
+  "$schema": "./catalog.schema.json",
+  "schema_version": 1,
+  "snapshot": {
+    "id": "2026-08-08.1",
+    "published_at": "2026-08-08T00:00:00Z",
+    "review_status": "reviewed"
+  },
+  "entries": [
+    {
+      "id": "survey/memory-in-the-age-of-ai-agents",
+      "title": "Memory in the Age of AI Agents: A Survey - Forms, Functions and Dynamics",
+      "artifact_type": "survey",
+      "version": {
+        "label": "arXiv v2",
+        "published_at": "2026-01-13",
+        "identifier": "arXiv:2512.13564v2",
+        "url": "https://arxiv.org/abs/2512.13564"
+      },
+      "taxonomy": {
+        "forms": ["token-flat", "token-planar", "token-hierarchical", "parametric", "latent"],
+        "functions": ["factual", "experiential", "working"],
+        "dynamics": ["formation", "evolution", "retrieval"],
+        "tags": ["taxonomy", "survey", "trustworthy-memory"]
+      },
+      "status": "cataloged",
+      "implementation": {
+        "type": "source-only",
+        "fidelity": "conceptual",
+        "path": null,
+        "limitations": [
+          "The survey is the conceptual source for scope and taxonomy, not an executable protocol.",
+          "MemXplore v0.1 implements only the token-flat slice."
+        ]
+      },
+      "upstream": {
+        "repository": "https://github.com/Shichun-Liu/Agent-Memory-Paper-List",
+        "commit": null,
+        "license": null,
+        "verification_status": "pending"
+      },
+      "benchmarks": []
+    },
+    {
+      "id": "memxplore/factual-rule-v1",
+      "title": "MemXplore factual rule reference",
+      "artifact_type": "strategy",
+      "version": {
+        "label": "v1-planned",
+        "published_at": null,
+        "identifier": null,
+        "url": null
+      },
+      "taxonomy": {
+        "forms": ["token-flat"],
+        "functions": ["factual"],
+        "dynamics": ["formation", "evolution", "retrieval"],
+        "tags": ["generator-free", "provenance", "bitemporal"]
+      },
+      "status": "planned",
+      "implementation": {
+        "type": "reference",
+        "fidelity": "conceptual",
+        "path": null,
+        "limitations": ["No paper reproduction claim."]
+      },
+      "upstream": {
+        "repository": null,
+        "commit": null,
+        "license": "Apache-2.0",
+        "verification_status": "not-applicable"
+      },
+      "benchmarks": [
+        {"id": "internal/factual-lifecycle", "role": "planned", "status": "not-run"},
+        {"id": "longmemeval-v1", "role": "planned", "status": "not-run"}
+      ]
+    },
+    {
+      "id": "memxplore/experiential-rule-v1",
+      "title": "MemXplore experiential rule reference",
+      "artifact_type": "strategy",
+      "version": {
+        "label": "v1-planned",
+        "published_at": null,
+        "identifier": null,
+        "url": null
+      },
+      "taxonomy": {
+        "forms": ["token-flat"],
+        "functions": ["experiential"],
+        "dynamics": ["formation", "evolution", "retrieval"],
+        "tags": ["generator-free", "episodes", "lessons"]
+      },
+      "status": "planned",
+      "implementation": {
+        "type": "reference",
+        "fidelity": "conceptual",
+        "path": null,
+        "limitations": ["No paper reproduction claim."]
+      },
+      "upstream": {
+        "repository": null,
+        "commit": null,
+        "license": "Apache-2.0",
+        "verification_status": "not-applicable"
+      },
+      "benchmarks": [
+        {"id": "internal/experiential-outcomes", "role": "planned", "status": "not-run"}
+      ]
+    },
+    {
+      "id": "memxplore/working-rule-v1",
+      "title": "MemXplore working-set rule reference",
+      "artifact_type": "strategy",
+      "version": {
+        "label": "v1-planned",
+        "published_at": null,
+        "identifier": null,
+        "url": null
+      },
+      "taxonomy": {
+        "forms": ["token-flat"],
+        "functions": ["working"],
+        "dynamics": ["formation", "evolution", "retrieval"],
+        "tags": ["generator-free", "task-scoped", "compaction"]
+      },
+      "status": "planned",
+      "implementation": {
+        "type": "reference",
+        "fidelity": "conceptual",
+        "path": null,
+        "limitations": ["No paper reproduction claim."]
+      },
+      "upstream": {
+        "repository": null,
+        "commit": null,
+        "license": "Apache-2.0",
+        "verification_status": "not-applicable"
+      },
+      "benchmarks": [
+        {"id": "internal/working-goal-compaction", "role": "planned", "status": "not-run"}
+      ]
+    }
+  ]
+}
+

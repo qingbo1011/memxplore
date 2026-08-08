@@ -112,7 +112,7 @@ func applyCreate(ctx context.Context, tx *sql.Tx, proposal application.Proposal,
 	if err := validateDependencies(ctx, tx, create.Scope, "", version.DerivedFrom); err != nil {
 		return domain.Memory{}, domain.MemoryVersion{}, err
 	}
-	if err := validatePayloadReferences(ctx, tx, proposal.Namespace, memory.Scope.Context, at, version.Payload); err != nil {
+	if err := validatePayloadReferences(ctx, tx, memory.Scope, at, version.Payload); err != nil {
 		return domain.Memory{}, domain.MemoryVersion{}, err
 	}
 	if err := insertMemoryRows(ctx, tx, memory, version); err != nil {
@@ -148,7 +148,7 @@ func applyEvolution(ctx context.Context, tx *sql.Tx, proposal application.Propos
 	if err := validateDependencies(ctx, tx, memory.Scope, current.ID, evolution.DerivedFrom); err != nil {
 		return domain.Memory{}, domain.MemoryVersion{}, err
 	}
-	if err := validatePayloadReferences(ctx, tx, proposal.Namespace, memory.Scope.Context, at, evolution.Payload); err != nil {
+	if err := validatePayloadReferences(ctx, tx, memory.Scope, at, evolution.Payload); err != nil {
 		return domain.Memory{}, domain.MemoryVersion{}, err
 	}
 	if evolution.Mode == application.EvolutionConflict {
@@ -307,19 +307,25 @@ func validateDependencies(ctx context.Context, tx *sql.Tx, targetScope domain.Sc
 			return fmt.Errorf("duplicate dependency parent %s", parent)
 		}
 		seen[parent] = struct{}{}
-		var parentNamespace, parentOwner domain.ID
+		var parentNamespace, parentOwner, parentSubject domain.ID
 		var parentVisibility domain.Visibility
 		if err := tx.QueryRowContext(ctx, `
-			SELECT m.namespace_id, m.owner_id, m.visibility
+			SELECT m.namespace_id, m.owner_id, m.subject_id, m.visibility
 			FROM memory_versions v JOIN memories m ON m.id = v.memory_id
-			WHERE v.id = ?`, parent).Scan(&parentNamespace, &parentOwner, &parentVisibility); err != nil {
+			WHERE v.id = ?`, parent).Scan(&parentNamespace, &parentOwner, &parentSubject, &parentVisibility); err != nil {
 			return fmt.Errorf("load dependency parent %s: %w", parent, err)
 		}
 		if parentNamespace != targetScope.Namespace {
 			return fmt.Errorf("dependency parent %s crosses namespace", parent)
 		}
+		if parentSubject != targetScope.Subject {
+			return fmt.Errorf("dependency parent %s crosses subject", parent)
+		}
 		if parentVisibility == domain.VisibilityPrivate && (parentOwner != targetScope.Owner || targetScope.Visibility != domain.VisibilityPrivate) {
 			return fmt.Errorf("private dependency parent %s cannot flow to another owner or visibility", parent)
+		}
+		if parentVisibility == domain.VisibilityShared && targetScope.Visibility == domain.VisibilityPublic {
+			return fmt.Errorf("shared dependency parent %s cannot flow to public visibility", parent)
 		}
 		if targetVersion != "" {
 			var cycle int
@@ -349,15 +355,20 @@ func scopeAuthorizesMemory(authorized, target domain.Scope) bool {
 	return authorized.Namespace == target.Namespace && authorized.Owner == target.Owner && authorized.Subject == target.Subject
 }
 
-func validatePayloadReferences(ctx context.Context, tx *sql.Tx, namespace, memoryContext domain.ID, at time.Time, payload domain.MemoryPayload) error {
+func validatePayloadReferences(ctx context.Context, tx *sql.Tx, scope domain.Scope, at time.Time, payload domain.MemoryPayload) error {
 	switch {
+	case payload.Factual != nil:
+		if payload.Factual.ClaimSubject != scope.Subject {
+			return fmt.Errorf("factual claim subject does not match memory scope")
+		}
+		return nil
 	case payload.Experiential != nil:
-		return validateExperientialReferences(ctx, tx, namespace, *payload.Experiential)
+		return validateExperientialReferences(ctx, tx, scope.Namespace, scope.Subject, *payload.Experiential)
 	case payload.Working != nil:
-		if memoryContext != payload.Working.TaskID {
+		if scope.Context != payload.Working.TaskID {
 			return fmt.Errorf("working payload task does not match memory context")
 		}
-		return validateWorkingReference(ctx, tx, namespace, at, *payload.Working)
+		return validateWorkingReference(ctx, tx, scope.Namespace, at, *payload.Working)
 	default:
 		return nil
 	}

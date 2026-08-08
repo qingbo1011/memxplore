@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -123,6 +124,53 @@ func TestBenchmarkInternalWritesAndVerifiesImmutableRun(t *testing.T) {
 	stderr.Reset()
 	if code := run([]string{"benchmark", "internal", "--output", output, "--run-id", "cli-internal-test"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "already exists") {
 		t.Fatalf("duplicate code=%d stderr=%s", code, stderr.String())
+	}
+}
+
+func TestDataExportValidateAndDryRunImport(t *testing.T) {
+	directory := t.TempDir()
+	source := filepath.Join(directory, "source.sqlite")
+	exportPath := filepath.Join(directory, "subject.json")
+	var stdout, stderr bytes.Buffer
+	code := runContext(context.Background(), []string{
+		"data", "export", "--db", source, "--subject", "subject-a", "--output", exportPath,
+	}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("export code=%d stderr=%s", code, stderr.String())
+	}
+	var metadata struct {
+		Path   string `json:"path"`
+		SHA256 string `json:"sha256"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Path != exportPath || len(metadata.SHA256) != 64 {
+		t.Fatalf("export metadata=%+v", metadata)
+	}
+	info, err := os.Stat(exportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("export permissions=%o, want 600", info.Mode().Perm())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"data", "validate", "--input", exportPath}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), `"valid": true`) {
+		t.Fatalf("validate code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	target := filepath.Join(directory, "target.sqlite")
+	if code := run([]string{"data", "import", "--db", target, "--input", exportPath, "--dry-run"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), `"dry_run": true`) {
+		t.Fatalf("dry-run code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"data", "export", "--db", source, "--subject", "subject-a", "--output", exportPath}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "file exists") {
+		t.Fatalf("overwrite code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 }
 

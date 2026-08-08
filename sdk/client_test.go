@@ -43,6 +43,21 @@ func TestClientReturnsTypedAPIError(t *testing.T) {
 	}
 }
 
+func TestClientExportsEscapedSubject(t *testing.T) {
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.EscapedPath() != "/v1/subjects/subject:alice/export" {
+			t.Fatalf("path=%s", request.URL.EscapedPath())
+		}
+		body := `{"format":"memxplore.subject-export","schema_version":1,"namespace":"local","subject":"subject:alice","private_owners":["alice"],"observations":[],"episodes":[],"working_sets":[],"memories":[]}`
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	client, _ := NewClient("http://127.0.0.1:7878", WithHTTPClient(&http.Client{Transport: transport}))
+	export, err := client.ExportSubject(context.Background(), "subject:alice")
+	if err != nil || export.SchemaVersion != 1 || export.Subject != "subject:alice" {
+		t.Fatalf("export=%+v err=%v", export, err)
+	}
+}
+
 func TestClientRejectsUnsafeBaseURL(t *testing.T) {
 	for _, value := range []string{"", "localhost:7878", "ftp://example.com"} {
 		if _, err := NewClient(value); err == nil {

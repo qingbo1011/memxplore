@@ -109,6 +109,14 @@ func TestRememberRecallAndJobOverLoopback(t *testing.T) {
 	if err := json.Unmarshal(recalled.Body.Bytes(), &bundle); err != nil || len(bundle.Items) != 1 {
 		t.Fatalf("items=%d err=%v body=%s", len(bundle.Items), err, recalled.Body.String())
 	}
+	exported := request(t, server.Handler(), http.MethodGet, "/v1/subjects/subject-a/export", "127.0.0.1:4242", "", nil)
+	if exported.Code != http.StatusOK {
+		t.Fatalf("export status=%d body=%s", exported.Code, exported.Body.String())
+	}
+	var subjectExport application.SubjectExport
+	if err := json.Unmarshal(exported.Body.Bytes(), &subjectExport); err != nil || subjectExport.Subject != "subject-a" || len(subjectExport.Memories) != 1 {
+		t.Fatalf("export memories=%d subject=%s err=%v body=%s", len(subjectExport.Memories), subjectExport.Subject, err, exported.Body.String())
+	}
 }
 
 func TestBearerAuthenticationAndScope(t *testing.T) {

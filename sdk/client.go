@@ -12,6 +12,7 @@ import (
 )
 
 const maxResponseBytes = 16 << 20
+const maxExportResponseBytes = 256 << 20
 
 // Client calls one MemXplore daemon using protocol v1.
 type Client struct {
@@ -94,6 +95,13 @@ func (c *Client) Recall(ctx context.Context, input RecallRequest) (RecallBundle,
 	return output, err
 }
 
+// ExportSubject returns the caller-authorized portable bundle for one data subject.
+func (c *Client) ExportSubject(ctx context.Context, subject ID) (SubjectExport, error) {
+	var output SubjectExport
+	err := c.doWithLimit(ctx, http.MethodGet, "/v1/subjects/"+url.PathEscape(string(subject))+"/export", nil, &output, maxExportResponseBytes)
+	return output, err
+}
+
 // Job returns durable job state.
 func (c *Client) Job(ctx context.Context, id ID) (Job, error) {
 	var output Job
@@ -132,6 +140,10 @@ func (c *Client) rawAction(ctx context.Context, method, path string, input any) 
 }
 
 func (c *Client) do(ctx context.Context, method, path string, input, output any) error {
+	return c.doWithLimit(ctx, method, path, input, output, maxResponseBytes)
+}
+
+func (c *Client) doWithLimit(ctx context.Context, method, path string, input, output any, limit int64) error {
 	var body io.Reader
 	if input != nil {
 		var encoded bytes.Buffer
@@ -158,13 +170,13 @@ func (c *Client) do(ctx context.Context, method, path string, input, output any)
 		return fmt.Errorf("call MemXplore: %w", err)
 	}
 	defer response.Body.Close()
-	limited := io.LimitReader(response.Body, maxResponseBytes+1)
+	limited := io.LimitReader(response.Body, limit+1)
 	data, err := io.ReadAll(limited)
 	if err != nil {
 		return fmt.Errorf("read MemXplore response: %w", err)
 	}
-	if len(data) > maxResponseBytes {
-		return fmt.Errorf("MemXplore response exceeds %d bytes", maxResponseBytes)
+	if int64(len(data)) > limit {
+		return fmt.Errorf("MemXplore response exceeds %d bytes", limit)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		var envelope struct {

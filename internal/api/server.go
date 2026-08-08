@@ -62,6 +62,7 @@ func NewServer(config Config) (*Server, error) {
 	mux.Handle("GET /v1/version", server.authorize(auth.ScopeMemoryRead, http.HandlerFunc(server.version)))
 	mux.Handle("POST /v1/remember", server.authorize(auth.ScopeMemoryWrite, http.HandlerFunc(server.remember)))
 	mux.Handle("POST /v1/recall", server.authorize(auth.ScopeMemoryRead, http.HandlerFunc(server.recall)))
+	mux.Handle("GET /v1/subjects/{id}/export", server.authorize(auth.ScopeMemoryRead, http.HandlerFunc(server.exportSubject)))
 	mux.Handle("GET /v1/jobs/{id}", server.authorize(auth.ScopeMemoryRead, http.HandlerFunc(server.job)))
 	mux.Handle("POST /v1/memories/{id}/archive", server.authorize(auth.ScopeMemoryWrite, http.HandlerFunc(server.archive)))
 	mux.Handle("POST /v1/memories/{id}/forget", server.authorize(auth.ScopeMemoryWrite, http.HandlerFunc(server.forget)))
@@ -197,6 +198,18 @@ func (s *Server) recall(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	writeJSON(writer, http.StatusOK, bundle)
+}
+
+func (s *Server) exportSubject(writer http.ResponseWriter, request *http.Request) {
+	principal := principalFrom(request.Context())
+	export, err := s.config.Store.ExportSubject(
+		request.Context(), principal.AccessScope(), domain.ID(request.PathValue("id")), s.config.Now().UTC(),
+	)
+	if err != nil {
+		writeError(writer, http.StatusConflict, "export_failed", err.Error())
+		return
+	}
+	writeJSON(writer, http.StatusOK, export)
 }
 
 func (s *Server) job(writer http.ResponseWriter, request *http.Request) {

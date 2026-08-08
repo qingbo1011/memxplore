@@ -130,6 +130,23 @@ type Version struct {
 	ExportSchemaVersion  int    `json:"export_schema_version"`
 }
 
+// SubjectExport is a versioned portable subject bundle. Entity payloads remain raw JSON so
+// additive domain fields can be preserved by protocol v1 clients without lossy re-encoding.
+type SubjectExport struct {
+	Format        string            `json:"format"`
+	SchemaVersion int               `json:"schema_version"`
+	ExportedAt    time.Time         `json:"exported_at"`
+	Namespace     ID                `json:"namespace"`
+	Subject       ID                `json:"subject"`
+	PrivateOwners []ID              `json:"private_owners"`
+	IncludeShared bool              `json:"include_shared"`
+	IncludePublic bool              `json:"include_public"`
+	Observations  []json.RawMessage `json:"observations"`
+	Episodes      []json.RawMessage `json:"episodes"`
+	WorkingSets   []json.RawMessage `json:"working_sets"`
+	Memories      []json.RawMessage `json:"memories"`
+}
+
 // PurgeReceipt contains no memory content.
 type PurgeReceipt struct {
 	ID                ID        `json:"id"`

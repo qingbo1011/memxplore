@@ -123,14 +123,14 @@ func (s *Store) UsageFeedback(ctx context.Context, versionID domain.ID) ([]domai
 	return result, rows.Err()
 }
 
-func validateExperientialReferences(ctx context.Context, tx *sql.Tx, namespace domain.ID, memory domain.ExperientialMemory) error {
+func validateExperientialReferences(ctx context.Context, tx *sql.Tx, namespace, subject domain.ID, memory domain.ExperientialMemory) error {
 	for _, evidence := range memory.Evidence {
-		var episodeNamespace domain.ID
-		if err := tx.QueryRowContext(ctx, "SELECT namespace_id FROM episodes WHERE id = ?", evidence.EpisodeID).Scan(&episodeNamespace); err != nil {
+		var episodeNamespace, episodeSubject domain.ID
+		if err := tx.QueryRowContext(ctx, "SELECT namespace_id, subject_id FROM episodes WHERE id = ?", evidence.EpisodeID).Scan(&episodeNamespace, &episodeSubject); err != nil {
 			return fmt.Errorf("load lesson episode %s: %w", evidence.EpisodeID, err)
 		}
-		if episodeNamespace != namespace {
-			return fmt.Errorf("lesson episode %s crosses namespace", evidence.EpisodeID)
+		if episodeNamespace != namespace || episodeSubject != subject {
+			return fmt.Errorf("lesson episode %s crosses namespace or subject", evidence.EpisodeID)
 		}
 		for _, outcomeID := range evidence.OutcomeIDs {
 			var episodeID domain.ID

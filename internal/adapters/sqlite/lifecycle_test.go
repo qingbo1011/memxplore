@@ -228,7 +228,7 @@ func TestPurgeCascadesDerivedMemoriesOrMarksThemStaleExplicitly(t *testing.T) {
 	}
 }
 
-func TestAuthorizedApplyBlocksOwnerBypassAndPrivateDisclosure(t *testing.T) {
+func TestSecurityGatePermissionBypassPrivateDisclosureAndSubjectCrossing(t *testing.T) {
 	ctx := context.Background()
 	store := testStore(t)
 	service, err := application.NewLifecycleService(policy.OwnerPolicy{}, store)
@@ -260,5 +260,40 @@ func TestAuthorizedApplyBlocksOwnerBypassAndPrivateDisclosure(t *testing.T) {
 	sharedScope.Visibility = domain.VisibilityShared
 	if _, err := service.Apply(ctx, sharedScope, sharedProposal, base.Add(5*time.Minute)); err == nil || !strings.Contains(err.Error(), "cannot flow") {
 		t.Fatalf("private-to-shared disclosure err=%v", err)
+	}
+
+	crossSubjectCreate := factualCreate("cross-subject derivative", base.Add(6*time.Minute), []domain.ID{parent.Version.ID})
+	crossSubjectCreate.Scope.Subject = "subject-bob"
+	crossSubjectCreate.Payload.Factual.ClaimSubject = "subject-bob"
+	crossSubjectProposal := proposal("proposal-cross-subject", application.ProposalCreate, "", crossSubjectCreate, base.Add(6*time.Minute))
+	crossSubjectScope := ownerScope
+	crossSubjectScope.Subject = "subject-bob"
+	if _, err := service.Apply(ctx, crossSubjectScope, crossSubjectProposal, base.Add(7*time.Minute)); err == nil || !strings.Contains(err.Error(), "crosses subject") {
+		t.Fatalf("cross-subject dependency err=%v", err)
+	}
+
+	sharedParentCreate := factualCreate("shared parent", base.Add(8*time.Minute), nil)
+	sharedParentCreate.Scope.Visibility = domain.VisibilityShared
+	sharedParentProposal := proposal("proposal-shared-parent", application.ProposalCreate, "", sharedParentCreate, base.Add(8*time.Minute))
+	sharedParentScope := ownerScope
+	sharedParentScope.Visibility = domain.VisibilityShared
+	sharedParent, err := service.Apply(ctx, sharedParentScope, sharedParentProposal, base.Add(9*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicDerivative := factualCreate("public derivative", base.Add(10*time.Minute), []domain.ID{sharedParent.Version.ID})
+	publicDerivative.Scope.Visibility = domain.VisibilityPublic
+	publicProposal := proposal("proposal-shared-to-public", application.ProposalCreate, "", publicDerivative, base.Add(10*time.Minute))
+	publicScope := ownerScope
+	publicScope.Visibility = domain.VisibilityPublic
+	if _, err := service.Apply(ctx, publicScope, publicProposal, base.Add(11*time.Minute)); err == nil || !strings.Contains(err.Error(), "cannot flow to public") {
+		t.Fatalf("shared-to-public disclosure err=%v", err)
+	}
+
+	mismatchedClaim := factualCreate("wrong subject claim", base.Add(12*time.Minute), nil)
+	mismatchedClaim.Payload.Factual.ClaimSubject = "subject-bob"
+	mismatchedProposal := proposal("proposal-claim-subject-mismatch", application.ProposalCreate, "", mismatchedClaim, base.Add(12*time.Minute))
+	if _, err := service.Apply(ctx, ownerScope, mismatchedProposal, base.Add(13*time.Minute)); err == nil || !strings.Contains(err.Error(), "claim subject") {
+		t.Fatalf("factual claim subject mismatch err=%v", err)
 	}
 }

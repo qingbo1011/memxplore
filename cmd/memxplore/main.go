@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -13,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -84,6 +86,8 @@ func runContext(ctx context.Context, args []string, stdin io.Reader, stdout, std
 		return lifecycleCommand(ctx, args[0], args[1:], stdout, stderr)
 	case "ingest":
 		return ingestCommand(ctx, args[1:], stdin, stdout, stderr)
+	case "data":
+		return dataCommand(ctx, args[1:], stdout, stderr)
 	case "benchmark":
 		return benchmarkCommand(ctx, args[1:], stdout, stderr)
 	case "eval":
@@ -568,6 +572,241 @@ func ingestCommand(ctx context.Context, args []string, stdin io.Reader, stdout, 
 	return writeCLIJSON(stdout, stderr, map[string]any{"accepted": len(results), "results": results})
 }
 
+const maxPortableExportBytes = 256 << 20
+
+func dataCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: memxplore data <export|import|validate|backup|restore> [options]")
+		return 2
+	}
+	switch args[0] {
+	case "export":
+		return dataExportCommand(ctx, args[1:], stdout, stderr)
+	case "import":
+		return dataImportCommand(ctx, args[1:], stdout, stderr)
+	case "validate":
+		return dataValidateCommand(ctx, args[1:], stdout, stderr)
+	case "backup":
+		return dataBackupCommand(ctx, args[1:], stdout, stderr)
+	case "restore":
+		return dataRestoreCommand(ctx, args[1:], stdout, stderr)
+	default:
+		fmt.Fprintf(stderr, "memxplore: unknown data command %q\n", args[0])
+		return 2
+	}
+}
+
+func dataExportCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("data export", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	db := flags.String("db", defaultDB, "SQLite database path")
+	namespace := flags.String("namespace", "local", "authorized namespace")
+	principal := flags.String("principal", "local-cli", "principal identifier")
+	subject := flags.String("subject", "", "data subject identifier")
+	owners := flags.String("owners", "local", "comma-separated authorized private owners")
+	includeShared := flags.Bool("include-shared", false, "include authorized shared data")
+	includePublic := flags.Bool("include-public", false, "include authorized public data")
+	output := flags.String("output", "", "new export JSON path")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if *subject == "" || *output == "" {
+		return cliError(stderr, fmt.Errorf("--subject and --output are required"))
+	}
+	store, err := sqlite.Open(ctx, *db, sqlite.DefaultOptions())
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	defer store.Close()
+	export, err := store.ExportSubject(ctx, application.AccessScope{
+		PrincipalID: domain.ID(*principal), Namespace: domain.ID(*namespace),
+		PrivateOwners: domainIDs(splitCSV(*owners)), AllowShared: *includeShared, AllowPublic: *includePublic,
+	}, domain.ID(*subject), time.Now().UTC())
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	digest, err := writeSubjectExportFile(*output, export)
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	counts := portableCounts(export)
+	return writeCLIJSON(stdout, stderr, map[string]any{
+		"path": *output, "sha256": digest, "schema_version": export.SchemaVersion, "counts": counts,
+	})
+}
+
+func dataImportCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("data import", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	db := flags.String("db", defaultDB, "SQLite database path")
+	input := flags.String("input", "", "subject export JSON path")
+	dryRun := flags.Bool("dry-run", false, "validate all writes and roll back")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if *input == "" {
+		return cliError(stderr, fmt.Errorf("--input is required"))
+	}
+	export, err := readSubjectExportFile(*input)
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	store, err := sqlite.Open(ctx, *db, sqlite.DefaultOptions())
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	defer store.Close()
+	result, err := store.ImportSubject(ctx, export, *dryRun)
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	return writeCLIJSON(stdout, stderr, result)
+}
+
+func dataValidateCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("data validate", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	db := flags.String("db", defaultDB, "SQLite database path")
+	input := flags.String("input", "", "optional subject export JSON path")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if *input != "" {
+		export, err := readSubjectExportFile(*input)
+		if err != nil {
+			return cliError(stderr, err)
+		}
+		return writeCLIJSON(stdout, stderr, map[string]any{
+			"valid": true, "kind": "subject_export", "schema_version": export.SchemaVersion, "counts": portableCounts(export),
+		})
+	}
+	store, err := sqlite.Open(ctx, *db, sqlite.DefaultOptions())
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	defer store.Close()
+	if err := store.Validate(ctx); err != nil {
+		return cliError(stderr, err)
+	}
+	return writeCLIJSON(stdout, stderr, map[string]any{"valid": true, "kind": "sqlite", "path": *db})
+}
+
+func dataBackupCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("data backup", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	db := flags.String("db", defaultDB, "SQLite database path")
+	output := flags.String("output", "", "new backup path")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if *output == "" {
+		return cliError(stderr, fmt.Errorf("--output is required"))
+	}
+	store, err := sqlite.Open(ctx, *db, sqlite.DefaultOptions())
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	defer store.Close()
+	if err := store.Backup(ctx, *output); err != nil {
+		return cliError(stderr, err)
+	}
+	return writeCLIJSON(stdout, stderr, map[string]any{"path": *output, "valid": true})
+}
+
+func dataRestoreCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("data restore", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	backup := flags.String("backup", "", "verified SQLite backup path")
+	db := flags.String("db", defaultDB, "restore target database path")
+	overwrite := flags.Bool("overwrite", false, "replace an existing target while preserving it")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if *backup == "" {
+		return cliError(stderr, fmt.Errorf("--backup is required"))
+	}
+	result, err := sqlite.RestoreFile(ctx, *backup, *db, *overwrite)
+	if err != nil {
+		return cliError(stderr, err)
+	}
+	return writeCLIJSON(stdout, stderr, map[string]any{
+		"path": *db, "valid": true, "replaced_backup": result.ReplacedBackup,
+	})
+}
+
+func writeSubjectExportFile(path string, export application.SubjectExport) (string, error) {
+	if err := export.Validate(); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return "", fmt.Errorf("create export directory: %w", err)
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return "", fmt.Errorf("create export file: %w", err)
+	}
+	hash := sha256.New()
+	encoder := json.NewEncoder(io.MultiWriter(file, hash))
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(export); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return "", fmt.Errorf("encode export file: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return "", fmt.Errorf("sync export file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", fmt.Errorf("close export file: %w", err)
+	}
+	return fmt.Sprintf("%x", hash.Sum(nil)), nil
+}
+
+func readSubjectExportFile(path string) (application.SubjectExport, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return application.SubjectExport{}, fmt.Errorf("open export file: %w", err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return application.SubjectExport{}, fmt.Errorf("stat export file: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() > maxPortableExportBytes {
+		return application.SubjectExport{}, fmt.Errorf("export must be a regular file no larger than %d bytes", maxPortableExportBytes)
+	}
+	var export application.SubjectExport
+	decoder := json.NewDecoder(file)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&export); err != nil {
+		return application.SubjectExport{}, fmt.Errorf("decode export file: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return application.SubjectExport{}, fmt.Errorf("export file contains trailing JSON")
+	}
+	if err := export.Validate(); err != nil {
+		return application.SubjectExport{}, fmt.Errorf("validate export file: %w", err)
+	}
+	return export, nil
+}
+
+func portableCounts(export application.SubjectExport) map[string]int {
+	counts := map[string]int{
+		"observations": len(export.Observations), "episodes": len(export.Episodes),
+		"working_sets": len(export.WorkingSets), "memories": len(export.Memories),
+	}
+	for _, episode := range export.Episodes {
+		counts["outcomes"] += len(episode.Outcomes)
+	}
+	for _, memory := range export.Memories {
+		counts["versions"] += len(memory.Versions)
+	}
+	return counts
+}
+
 func benchmarkCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "usage: memxplore benchmark <internal|longmemeval-v1|longmemeval-v1-local-answer|longmemeval-v2-small> [options]")
@@ -815,6 +1054,7 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  forget      Logically forget memory")
 	fmt.Fprintln(writer, "  purge       Irreversibly purge memory with --confirm")
 	fmt.Fprintln(writer, "  ingest      Ingest opt-in agent adapter data")
+	fmt.Fprintln(writer, "  data        Export, import, validate, back up, or restore local data")
 	fmt.Fprintln(writer, "  benchmark   Run deterministic or LongMemEval evaluations")
 	fmt.Fprintln(writer, "  eval        Verify immutable evaluation artifacts")
 	fmt.Fprintln(writer, "  version     Print program and schema versions")

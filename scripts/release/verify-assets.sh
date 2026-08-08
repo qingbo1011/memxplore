@@ -14,6 +14,11 @@ for command in jq shasum tar unzip; do
         exit 1
     fi
 done
+ARCHIVE_LIST=$(mktemp "${TMPDIR:-/tmp}/memxplore-assets-list.XXXXXX")
+cleanup() {
+    rm -f "$ARCHIVE_LIST"
+}
+trap cleanup EXIT INT TERM
 
 (
     cd "$ASSETS"
@@ -32,19 +37,18 @@ jq -e \
 for platform in darwin_arm64 linux_amd64 linux_arm64; do
     archive="$ASSETS/memxplore_${PROGRAM_VERSION}_${platform}.tar.gz"
     root="memxplore_${PROGRAM_VERSION}_${platform}"
-    tar -tzf "$archive" | sort > "$ASSETS/.archive-list"
-    test "$(wc -l < "$ASSETS/.archive-list" | tr -d ' ')" -eq 3
-    grep -qx "$root/LICENSE" "$ASSETS/.archive-list"
-    grep -qx "$root/README.md" "$ASSETS/.archive-list"
-    grep -qx "$root/memxplore" "$ASSETS/.archive-list"
+    tar -tzf "$archive" | sort > "$ARCHIVE_LIST"
+    test "$(wc -l < "$ARCHIVE_LIST" | tr -d ' ')" -eq 3
+    grep -qx "$root/LICENSE" "$ARCHIVE_LIST"
+    grep -qx "$root/README.md" "$ARCHIVE_LIST"
+    grep -qx "$root/memxplore" "$ARCHIVE_LIST"
 done
 windows_archive="$ASSETS/memxplore_${PROGRAM_VERSION}_windows_amd64.zip"
 windows_root="memxplore_${PROGRAM_VERSION}_windows_amd64"
-unzip -Z1 "$windows_archive" | sort > "$ASSETS/.archive-list"
-test "$(wc -l < "$ASSETS/.archive-list" | tr -d ' ')" -eq 3
-grep -qx "$windows_root/LICENSE" "$ASSETS/.archive-list"
-grep -qx "$windows_root/README.md" "$ASSETS/.archive-list"
-grep -qx "$windows_root/memxplore.exe" "$ASSETS/.archive-list"
-rm "$ASSETS/.archive-list"
+unzip -Z1 "$windows_archive" | sort > "$ARCHIVE_LIST"
+test "$(wc -l < "$ARCHIVE_LIST" | tr -d ' ')" -eq 3
+grep -qx "$windows_root/LICENSE" "$ARCHIVE_LIST"
+grep -qx "$windows_root/README.md" "$ARCHIVE_LIST"
+grep -qx "$windows_root/memxplore.exe" "$ARCHIVE_LIST"
 
 echo "MemXplore release assets verified: $ASSETS"

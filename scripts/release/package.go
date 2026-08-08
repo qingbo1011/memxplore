@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -160,8 +159,12 @@ func archiveMetadata(root, path string) (string, int64, error) {
 	if err != nil {
 		return "", 0, err
 	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", 0, err
+	}
 	mode := int64(0o644)
-	if strings.HasPrefix(filepath.Base(path), "memxplore") && filepath.Base(path) != "README.md" {
+	if info.Mode().Perm()&0o111 != 0 {
 		mode = 0o755
 	}
 	return filepath.ToSlash(relative), mode, nil

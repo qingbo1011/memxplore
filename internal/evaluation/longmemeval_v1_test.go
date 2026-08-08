@@ -23,7 +23,7 @@ func TestLongMemEvalV1AdapterIngestsScoresAndLabelsPartialRun(t *testing.T) {
 		t.Fatalf("predictions=%d indexed=%d tokens=%d", len(run.Predictions), run.Metrics.IndexedUnits, run.Metrics.IngestTokens)
 	}
 	lexical := run.Metrics.Variants["lexical"]
-	if lexical.RecallAtK != 1 || lexical.MRR != 1 || lexical.AbstentionAccuracy != 1 {
+	if lexical.EvaluableCases != 1 || lexical.AbstentionCases != 1 || lexical.RecallAtK != 1 || lexical.MRR != 1 || lexical.AbstentionAccuracy != 1 {
 		t.Fatalf("lexical=%+v", lexical)
 	}
 	if len(run.Traces) != 2 {
@@ -42,5 +42,21 @@ func TestLongMemEvalV1RejectsMisalignedDataset(t *testing.T) {
 	}
 	if err := validateLongMemEvalV1(instance); err == nil {
 		t.Fatal("misaligned dataset passed validation")
+	}
+}
+
+func TestLongMemEvalV1AllowsEmptyTurnButRejectsEmptySession(t *testing.T) {
+	instance := longMemEvalV1Instance{
+		QuestionID: "q", QuestionType: "single-session-user", Question: "question", Answer: []byte(`"answer"`),
+		HaystackSessionIDs: []string{"s1"}, HaystackDates: []string{"2024-01-01"},
+		HaystackSessions: [][]longMemEvalV1Turn{{{Role: "user", Content: ""}, {Role: "assistant", Content: "answer"}}},
+		AnswerSessionIDs: []string{"s1"},
+	}
+	if err := validateLongMemEvalV1(instance); err != nil {
+		t.Fatal(err)
+	}
+	instance.HaystackSessions[0][1].Content = ""
+	if err := validateLongMemEvalV1(instance); err == nil {
+		t.Fatal("all-empty session passed validation")
 	}
 }

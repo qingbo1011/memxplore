@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -120,13 +121,19 @@ func RunLongMemEvalV1(ctx context.Context, config LongMemEvalV1Config) (_ Run, f
 			Actor: "eval-adapter", Context: stableEvalID("question", instance.QuestionID), Visibility: domain.VisibilityPrivate,
 		}
 		versionSessions := make(map[domain.ID]string, len(instance.HaystackSessions))
+		indexedSessions := make(map[string]struct{}, len(instance.HaystackSessions))
 		caseBase := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(index) * 24 * time.Hour)
 		for sessionIndex, turns := range instance.HaystackSessions {
+			sessionID := instance.HaystackSessionIDs[sessionIndex]
+			if _, duplicate := indexedSessions[sessionID]; duplicate {
+				continue
+			}
+			indexedSessions[sessionID] = struct{}{}
 			text := longMemEvalSessionText(instance.HaystackDates[sessionIndex], turns)
 			if text == "" {
 				return fmt.Errorf("case %s session %d is empty", instance.QuestionID, sessionIndex)
 			}
-			observationID := stableEvalID("obs", instance.QuestionID, instance.HaystackSessionIDs[sessionIndex])
+			observationID := stableEvalID("obs", instance.QuestionID, sessionID)
 			capturedAt := caseBase.Add(time.Duration(sessionIndex) * time.Second)
 			create := application.MemoryCreate{
 				Scope: scope, Function: domain.FunctionFactual,
@@ -143,23 +150,24 @@ func RunLongMemEvalV1(ctx context.Context, config LongMemEvalV1Config) (_ Run, f
 			}
 			payload, _ := json.Marshal(create)
 			proposal := application.Proposal{
-				ID: stableEvalID("proposal", instance.QuestionID, instance.HaystackSessionIDs[sessionIndex]), Namespace: scope.Namespace,
+				ID: stableEvalID("proposal", instance.QuestionID, sessionID), Namespace: scope.Namespace,
 				ObservationIDs: []domain.ID{observationID}, Kind: application.ProposalCreate, Payload: payload,
 				StrategyID: adapter.ID + "@" + adapter.Version, StrategyHash: adapterHash,
 				CreatedAt: capturedAt, UntrustedContent: true,
 			}
 			applied, err := service.Apply(ctx, scope, proposal, capturedAt.Add(time.Millisecond))
 			if err != nil {
-				return fmt.Errorf("ingest case %s session %s: %w", instance.QuestionID, instance.HaystackSessionIDs[sessionIndex], err)
+				return fmt.Errorf("ingest case %s session %s: %w", instance.QuestionID, sessionID, err)
 			}
-			versionSessions[applied.Version.ID] = instance.HaystackSessionIDs[sessionIndex]
+			versionSessions[applied.Version.ID] = sessionID
 			ingestTokens += estimateTokens(text)
 			indexed++
 		}
 		queryAt := caseBase.Add(time.Duration(len(instance.HaystackSessions)+1) * time.Second)
+		expectedReferences := longMemEvalV1ExpectedReferences(instance)
 		noMemory := Prediction{
 			CaseID: instance.QuestionID, Category: instance.QuestionType, Variant: "no-memory", Query: instance.Question,
-			ExpectedReferences: append([]string(nil), instance.AnswerSessionIDs...),
+			ExpectedReferences: append([]string(nil), expectedReferences...),
 		}
 		recallStarted := time.Now()
 		bundle, recallErr := retriever.Recall(ctx, application.RecallRequest{
@@ -169,7 +177,7 @@ func RunLongMemEvalV1(ctx context.Context, config LongMemEvalV1Config) (_ Run, f
 		})
 		prediction := Prediction{
 			CaseID: instance.QuestionID, Category: instance.QuestionType, Variant: "lexical", Query: instance.Question,
-			ExpectedReferences: append([]string(nil), instance.AnswerSessionIDs...),
+			ExpectedReferences: append([]string(nil), expectedReferences...),
 			LatencyMS:          float64(time.Since(recallStarted).Microseconds()) / 1000, InputTokens: estimateTokens(instance.Question),
 		}
 		if recallErr != nil {
@@ -226,8 +234,9 @@ func RunLongMemEvalV1(ctx context.Context, config LongMemEvalV1Config) (_ Run, f
 	manifest.Limitations = []string{
 		"This is session-level ingest/retrieval evaluation, not the official model-judged question-answering score.",
 		"The adapter is protocol-compatible with the pinned cleaned dataset and makes no reproduction or leaderboard claim.",
-		"Recall@K and MRR exclude abstention cases with no answer_session_ids; abstention accuracy is reported separately.",
+		"Recall@K and MRR exclude the 30 official question_id suffix _abs cases; retrieval abstention accuracy is reported separately.",
 		"The lexical baseline uses no model, provider calls, or monetary cost.",
+		"Repeated session IDs with identical content are indexed once at their first occurrence because references are session-ID-level.",
 	}
 	if config.Limit > 0 {
 		manifest.Limitations = append(manifest.Limitations, fmt.Sprintf("Partial bounded run: first %d cases only.", cases))
@@ -282,22 +291,30 @@ func validateLongMemEvalV1(instance longMemEvalV1Instance) error {
 	if count == 0 || len(instance.HaystackDates) != count || len(instance.HaystackSessions) != count {
 		return fmt.Errorf("haystack ids, dates, and sessions must be non-empty and aligned")
 	}
-	sessions := make(map[string]struct{}, count)
+	sessions := make(map[string]int, count)
 	for index, id := range instance.HaystackSessionIDs {
 		if id == "" {
 			return fmt.Errorf("haystack session %d has no id", index)
 		}
-		if _, duplicate := sessions[id]; duplicate {
-			return fmt.Errorf("duplicate haystack session id %q", id)
+		if previous, duplicate := sessions[id]; duplicate {
+			if !slices.Equal(instance.HaystackSessions[previous], instance.HaystackSessions[index]) {
+				return fmt.Errorf("duplicate haystack session id %q has different content", id)
+			}
+			continue
 		}
-		sessions[id] = struct{}{}
+		sessions[id] = index
 		if len(instance.HaystackSessions[index]) == 0 {
 			return fmt.Errorf("haystack session %q is empty", id)
 		}
+		hasContent := false
 		for _, turn := range instance.HaystackSessions[index] {
-			if (turn.Role != "user" && turn.Role != "assistant") || strings.TrimSpace(turn.Content) == "" {
+			if turn.Role != "user" && turn.Role != "assistant" {
 				return fmt.Errorf("haystack session %q has invalid turn", id)
 			}
+			hasContent = hasContent || strings.TrimSpace(turn.Content) != ""
+		}
+		if !hasContent {
+			return fmt.Errorf("haystack session %q has no content", id)
 		}
 	}
 	if len(instance.AnswerSessionIDs) == 0 && !strings.HasSuffix(instance.QuestionID, "_abs") {
@@ -325,6 +342,13 @@ func longMemEvalSessionText(date string, turns []longMemEvalV1Turn) string {
 		output.WriteByte('\n')
 	}
 	return strings.TrimSpace(output.String())
+}
+
+func longMemEvalV1ExpectedReferences(instance longMemEvalV1Instance) []string {
+	if strings.HasSuffix(instance.QuestionID, "_abs") {
+		return nil
+	}
+	return instance.AnswerSessionIDs
 }
 
 func longMemEvalV1Strategy(topK int) strategydef.Package {

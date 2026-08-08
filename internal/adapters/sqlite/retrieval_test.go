@@ -142,8 +142,9 @@ func TestRetrievalTracePersistsCandidateDecisions(t *testing.T) {
 	trace := domain.RetrievalTrace{
 		ID: "trace-sqlite", Scope: testObservation("obs-trace", "trace").Scope,
 		Query: "trace", StrategyID: "retrieval.hybrid@1.0.0",
-		StrategyHash: strings.Repeat("0", 64),
-		ValidAt:      now, SystemAt: now, TokenBudget: 10, TokensUsed: 2,
+		StrategyHash:  strings.Repeat("0", 64),
+		Authorization: domain.RetrievalAuthorization{PrincipalID: "actor-test", PrivateOwners: []domain.ID{"owner-alice"}},
+		ValidAt:       now, SystemAt: now, TokenBudget: 10, TokensUsed: 2,
 		Candidates: []domain.RetrievalCandidate{{
 			MemoryID: "mem-a", VersionID: "mv-a", Selected: true, EstimatedTokens: 2,
 			Score: domain.ScoreExplanation{Trust: 0.7, Total: 0.5},

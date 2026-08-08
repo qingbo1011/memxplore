@@ -49,21 +49,32 @@ type RetrievalCandidate struct {
 	Score           ScoreExplanation `json:"score"`
 }
 
+// RetrievalAuthorization records the pre-content access decision used for one trace.
+type RetrievalAuthorization struct {
+	PrincipalID   ID   `json:"principal_id"`
+	PrivateOwners []ID `json:"private_owners"`
+	AllowShared   bool `json:"allow_shared"`
+	AllowPublic   bool `json:"allow_public"`
+}
+
 // RetrievalTrace records strategy inputs, candidates, budget, and fallback behavior.
 type RetrievalTrace struct {
-	ID             ID                   `json:"id"`
-	Scope          Scope                `json:"scope"`
-	Query          string               `json:"query"`
-	StrategyID     string               `json:"strategy_id"`
-	StrategyHash   string               `json:"strategy_hash"`
-	FallbackReason string               `json:"fallback_reason,omitempty"`
-	ValidAt        time.Time            `json:"valid_at"`
-	SystemAt       time.Time            `json:"system_at"`
-	TokenBudget    int                  `json:"token_budget"`
-	TokensUsed     int                  `json:"tokens_used"`
-	Candidates     []RetrievalCandidate `json:"candidates"`
-	StartedAt      time.Time            `json:"started_at"`
-	CompletedAt    time.Time            `json:"completed_at"`
+	ID                   ID                     `json:"id"`
+	Scope                Scope                  `json:"scope"`
+	Query                string                 `json:"query"`
+	StrategyID           string                 `json:"strategy_id"`
+	StrategyHash         string                 `json:"strategy_hash"`
+	FallbackReason       string                 `json:"fallback_reason,omitempty"`
+	Authorization        RetrievalAuthorization `json:"authorization"`
+	Functions            []MemoryFunction       `json:"functions,omitempty"`
+	IncludeGlobalWorking bool                   `json:"include_global_working"`
+	ValidAt              time.Time              `json:"valid_at"`
+	SystemAt             time.Time              `json:"system_at"`
+	TokenBudget          int                    `json:"token_budget"`
+	TokensUsed           int                    `json:"tokens_used"`
+	Candidates           []RetrievalCandidate   `json:"candidates"`
+	StartedAt            time.Time              `json:"started_at"`
+	CompletedAt          time.Time              `json:"completed_at"`
 }
 
 // Validate checks the trace without interpreting adapter-specific scores.
@@ -83,6 +94,34 @@ func (t RetrievalTrace) Validate() error {
 	strategyDigest, err := hex.DecodeString(t.StrategyHash)
 	if err != nil || len(strategyDigest) != 32 {
 		return fmt.Errorf("retrieval trace strategy_hash must be a SHA-256 hex digest")
+	}
+	if err := validateID("retrieval_trace.authorization.principal_id", t.Authorization.PrincipalID, true); err != nil {
+		return err
+	}
+	if len(t.Authorization.PrivateOwners) == 0 {
+		return fmt.Errorf("retrieval trace authorization requires private owners")
+	}
+	seenOwners := make(map[ID]struct{}, len(t.Authorization.PrivateOwners))
+	for _, owner := range t.Authorization.PrivateOwners {
+		if err := validateID("retrieval_trace.authorization.private_owner", owner, true); err != nil {
+			return err
+		}
+		if _, duplicate := seenOwners[owner]; duplicate {
+			return fmt.Errorf("retrieval trace authorization contains duplicate owner %s", owner)
+		}
+		seenOwners[owner] = struct{}{}
+	}
+	seenFunctions := make(map[MemoryFunction]struct{}, len(t.Functions))
+	for _, function := range t.Functions {
+		switch function {
+		case FunctionFactual, FunctionExperiential, FunctionWorking:
+		default:
+			return fmt.Errorf("retrieval trace function %q is invalid", function)
+		}
+		if _, duplicate := seenFunctions[function]; duplicate {
+			return fmt.Errorf("retrieval trace contains duplicate function %q", function)
+		}
+		seenFunctions[function] = struct{}{}
 	}
 	if t.ValidAt.IsZero() || t.SystemAt.IsZero() {
 		return fmt.Errorf("retrieval trace requires valid_at and system_at")

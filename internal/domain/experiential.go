@@ -67,6 +67,9 @@ func (e ExperientialMemory) Validate() error {
 		if err := validateID("experiential.feedback.trace_id", feedback.TraceID, true); err != nil {
 			return err
 		}
+		if err := validateID("experiential.feedback.source", feedback.Source, true); err != nil {
+			return err
+		}
 		if feedback.Value < -1 || feedback.Value > 1 {
 			return fmt.Errorf("experiential feedback value must be within [-1,1]")
 		}

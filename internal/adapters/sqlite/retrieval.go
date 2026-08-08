@@ -92,17 +92,23 @@ func candidateWhere(filter application.CandidateFilter) (string, []any, error) {
 		"((m.visibility = 'private' AND m.owner_id IN (" + strings.Join(privatePlaceholders, ",") + "))" +
 			" OR (m.visibility = 'shared' AND ? = 1) OR (m.visibility = 'public' AND ? = 1))",
 		"m.state = 'active'",
-		"v.state = 'current'",
-		"v.version_number = m.current_version",
+		"v.state IN ('current', 'superseded')",
 		"v.valid_from <= ? AND (v.valid_to IS NULL OR v.valid_to > ?)",
 		"v.system_from <= ? AND (v.system_to IS NULL OR v.system_to > ?)",
 	}
 	args = append(args, formatTime(filter.ValidAt), formatTime(filter.ValidAt), formatTime(filter.SystemAt), formatTime(filter.SystemAt))
-	if filter.Context == "" {
-		clauses = append(clauses, "m.function <> 'working'")
+	workingSet := `EXISTS (
+        SELECT 1 FROM working_sets ws
+        WHERE ws.namespace_id = m.namespace_id AND ws.task_id = m.context_id
+          AND ws.state = 'active' AND (ws.expires_at IS NULL OR ws.expires_at > ?)`
+	if filter.Context != "" {
+		clauses = append(clauses, "(m.function <> 'working' OR "+workingSet+" AND ws.task_id = ?))")
+		args = append(args, formatTime(filter.SystemAt), filter.Context)
+	} else if filter.IncludeGlobalWorking {
+		clauses = append(clauses, "(m.function <> 'working' OR "+workingSet+" AND ws.global_recall = 1))")
+		args = append(args, formatTime(filter.SystemAt))
 	} else {
-		clauses = append(clauses, "(m.function <> 'working' OR m.context_id = ?)")
-		args = append(args, filter.Context)
+		clauses = append(clauses, "m.function <> 'working'")
 	}
 	if len(filter.Functions) > 0 {
 		placeholders := make([]string, len(filter.Functions))
@@ -215,6 +221,14 @@ func (s *Store) PutRetrievalTrace(ctx context.Context, trace domain.RetrievalTra
 	if err != nil {
 		return fmt.Errorf("encode retrieval scope: %w", err)
 	}
+	filter, err := json.Marshal(struct {
+		Authorization        domain.RetrievalAuthorization `json:"authorization"`
+		Functions            []domain.MemoryFunction       `json:"functions,omitempty"`
+		IncludeGlobalWorking bool                          `json:"include_global_working"`
+	}{trace.Authorization, trace.Functions, trace.IncludeGlobalWorking})
+	if err != nil {
+		return fmt.Errorf("encode retrieval filter: %w", err)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin retrieval trace: %w", err)
@@ -223,10 +237,10 @@ func (s *Store) PutRetrievalTrace(ctx context.Context, trace domain.RetrievalTra
 	if _, err := tx.ExecContext(ctx, `
         INSERT INTO retrieval_traces(
             id, namespace_id, scope_json, query, strategy_id, strategy_hash, fallback_reason,
-            valid_at, system_at, token_budget, tokens_used, started_at, completed_at
-        ) VALUES(?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?)`,
+			filter_json, valid_at, system_at, token_budget, tokens_used, started_at, completed_at
+		) VALUES(?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?)`,
 		trace.ID, trace.Scope.Namespace, string(scope), trace.Query, trace.StrategyID, trace.StrategyHash, trace.FallbackReason,
-		formatTime(trace.ValidAt), formatTime(trace.SystemAt), trace.TokenBudget, trace.TokensUsed,
+		string(filter), formatTime(trace.ValidAt), formatTime(trace.SystemAt), trace.TokenBudget, trace.TokensUsed,
 		formatTime(trace.StartedAt), formatTime(trace.CompletedAt)); err != nil {
 		return fmt.Errorf("insert retrieval trace: %w", err)
 	}

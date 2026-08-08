@@ -49,6 +49,21 @@ func insertObservation(ctx context.Context, executor contextExecutor, observatio
 
 // PutMemory atomically stores a stable memory, its first version, dependencies, and FTS text.
 func (s *Store) PutMemory(ctx context.Context, memory domain.Memory, version domain.MemoryVersion) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin memory insert: %w", err)
+	}
+	defer tx.Rollback()
+	if err := insertMemoryRows(ctx, tx, memory, version); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit memory insert: %w", err)
+	}
+	return nil
+}
+
+func insertMemoryRows(ctx context.Context, executor contextExecutor, memory domain.Memory, version domain.MemoryVersion) error {
 	if err := memory.Validate(); err != nil {
 		return fmt.Errorf("validate memory: %w", err)
 	}
@@ -62,12 +77,7 @@ func (s *Store) PutMemory(ctx context.Context, memory domain.Memory, version dom
 	if err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin memory insert: %w", err)
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `
+	if _, err := executor.ExecContext(ctx, `
         INSERT INTO memories(
             id, namespace_id, owner_id, subject_id, actor_id, context_id, visibility,
             function, state, current_version, created_at
@@ -77,7 +87,7 @@ func (s *Store) PutMemory(ctx context.Context, memory domain.Memory, version dom
 		formatTime(memory.CreatedAt)); err != nil {
 		return fmt.Errorf("insert memory: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `
+	if _, err := executor.ExecContext(ctx, `
         INSERT INTO memory_versions(
             id, memory_id, version_number, state, taxonomy_json, payload_json, provenance_json,
             supersedes_json, derived_from_json, valid_from, valid_to, system_from, system_to,
@@ -90,18 +100,15 @@ func (s *Store) PutMemory(ctx context.Context, memory domain.Memory, version dom
 		return fmt.Errorf("insert memory version: %w", err)
 	}
 	for _, parentID := range version.DerivedFrom {
-		if _, err := tx.ExecContext(ctx,
+		if _, err := executor.ExecContext(ctx,
 			"INSERT INTO memory_dependencies(parent_version_id, child_version_id) VALUES(?, ?)", parentID, version.ID); err != nil {
 			return fmt.Errorf("insert memory dependency: %w", err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx,
+	if _, err := executor.ExecContext(ctx,
 		"INSERT INTO memory_fts(memory_version_id, memory_id, namespace_id, text_content) VALUES(?, ?, ?, ?)",
 		version.ID, memory.ID, memory.Scope.Namespace, payloadPlainText(version.Payload)); err != nil {
 		return fmt.Errorf("index memory version: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit memory insert: %w", err)
 	}
 	return nil
 }

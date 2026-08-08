@@ -39,26 +39,28 @@ type AccessScope struct {
 
 // CandidateFilter is pushed into storage before content is materialized.
 type CandidateFilter struct {
-	Access    AccessScope
-	Subject   domain.ID
-	Context   domain.ID
-	Functions []domain.MemoryFunction
-	ValidAt   time.Time
-	SystemAt  time.Time
+	Access               AccessScope
+	Subject              domain.ID
+	Context              domain.ID
+	Functions            []domain.MemoryFunction
+	ValidAt              time.Time
+	SystemAt             time.Time
+	IncludeGlobalWorking bool
 }
 
 // RecallRequest asks for evidence, never a generated answer.
 type RecallRequest struct {
-	TraceID        domain.ID
-	Scope          domain.Scope
-	Access         AccessScope
-	Query          string
-	Functions      []domain.MemoryFunction
-	Mode           RetrievalMode
-	ValidAt        time.Time
-	SystemAt       time.Time
-	TokenBudget    int
-	CandidateLimit int
+	TraceID              domain.ID
+	Scope                domain.Scope
+	Access               AccessScope
+	Query                string
+	Functions            []domain.MemoryFunction
+	Mode                 RetrievalMode
+	ValidAt              time.Time
+	SystemAt             time.Time
+	TokenBudget          int
+	CandidateLimit       int
+	IncludeGlobalWorking bool
 }
 
 // StoredCandidate is a permission- and time-filtered immutable memory version.
@@ -177,6 +179,7 @@ func (r *Retriever) Recall(ctx context.Context, request RecallRequest) (RecallBu
 		Access: request.Access, Subject: request.Scope.Subject, Context: request.Scope.Context,
 		Functions: append([]domain.MemoryFunction(nil), request.Functions...),
 		ValidAt:   request.ValidAt, SystemAt: request.SystemAt,
+		IncludeGlobalWorking: request.IncludeGlobalWorking,
 	}
 	poolLimit := request.CandidateLimit * 4
 	if poolLimit > 1000 {
@@ -241,7 +244,14 @@ func (r *Retriever) Recall(ctx context.Context, request RecallRequest) (RecallBu
 		ID: traceID, Scope: request.Scope, Query: request.Query,
 		StrategyID: definition.ID + "@" + definition.Version, StrategyHash: strategyHash,
 		FallbackReason: fallback,
-		ValidAt:        request.ValidAt, SystemAt: request.SystemAt,
+		Authorization: domain.RetrievalAuthorization{
+			PrincipalID:   request.Access.PrincipalID,
+			PrivateOwners: append([]domain.ID(nil), request.Access.PrivateOwners...),
+			AllowShared:   request.Access.AllowShared, AllowPublic: request.Access.AllowPublic,
+		},
+		Functions:            append([]domain.MemoryFunction(nil), request.Functions...),
+		IncludeGlobalWorking: request.IncludeGlobalWorking,
+		ValidAt:              request.ValidAt, SystemAt: request.SystemAt,
 		TokenBudget: request.TokenBudget, TokensUsed: tokensUsed, Candidates: traceCandidates,
 		StartedAt: startedAt, CompletedAt: completedAt,
 	}
@@ -538,6 +548,16 @@ func validateRecallRequest(request RecallRequest) error {
 	if len(request.Access.PrivateOwners) == 0 {
 		return fmt.Errorf("at least one authorized private owner is required")
 	}
+	seenOwners := make(map[domain.ID]struct{}, len(request.Access.PrivateOwners))
+	for _, owner := range request.Access.PrivateOwners {
+		if owner == "" {
+			return fmt.Errorf("authorized private owner cannot be empty")
+		}
+		if _, duplicate := seenOwners[owner]; duplicate {
+			return fmt.Errorf("authorized private owners contain duplicate %s", owner)
+		}
+		seenOwners[owner] = struct{}{}
+	}
 	if strings.TrimSpace(request.Query) == "" || utf8.RuneCountInString(request.Query) > 10000 {
 		return fmt.Errorf("recall query is required and cannot exceed 10000 characters")
 	}
@@ -547,10 +567,15 @@ func validateRecallRequest(request RecallRequest) error {
 	if request.CandidateLimit < 1 || request.CandidateLimit > 250 {
 		return fmt.Errorf("candidate limit must be within [1,250]")
 	}
+	seenFunctions := make(map[domain.MemoryFunction]struct{}, len(request.Functions))
 	for _, function := range request.Functions {
 		if !slices.Contains([]domain.MemoryFunction{domain.FunctionFactual, domain.FunctionExperiential, domain.FunctionWorking}, function) {
 			return fmt.Errorf("memory function %q is invalid", function)
 		}
+		if _, duplicate := seenFunctions[function]; duplicate {
+			return fmt.Errorf("memory functions contain duplicate %q", function)
+		}
+		seenFunctions[function] = struct{}{}
 	}
 	return nil
 }

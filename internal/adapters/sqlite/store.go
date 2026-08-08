@@ -16,7 +16,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const latestSchemaVersion = 1
+const latestSchemaVersion = 2
 
 // Options control connection safety and migration backups.
 type Options struct {

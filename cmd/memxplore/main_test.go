@@ -19,7 +19,7 @@ func TestVersionJSON(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("decode output: %v", err)
 	}
-	if got.Program != "memxplore" || got.Protocol != "v1" {
+	if got.Program != "memxplore" || got.Protocol != "v1" || got.StorageSchema != 2 {
 		t.Fatalf("unexpected version output: %+v", got)
 	}
 }

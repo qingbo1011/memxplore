@@ -6,7 +6,7 @@ const (
 	ProtocolVersion = "v1"
 
 	// StorageSchemaVersion versions the daemon-owned SQLite schema.
-	StorageSchemaVersion = 1
+	StorageSchemaVersion = 2
 
 	// ExportSchemaVersion versions portable export and import documents.
 	ExportSchemaVersion = 1

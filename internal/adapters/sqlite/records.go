@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -11,6 +12,14 @@ import (
 
 // PutObservation stores one immutable observation.
 func (s *Store) PutObservation(ctx context.Context, observation domain.Observation) error {
+	return insertObservation(ctx, s.db, observation, time.Now().UTC())
+}
+
+type contextExecutor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func insertObservation(ctx context.Context, executor contextExecutor, observation domain.Observation, storedAt time.Time) error {
 	if err := observation.Validate(); err != nil {
 		return fmt.Errorf("validate observation: %w", err)
 	}
@@ -22,7 +31,7 @@ func (s *Store) PutObservation(ctx context.Context, observation domain.Observati
 	if err != nil {
 		return fmt.Errorf("encode observation metadata: %w", err)
 	}
-	_, err = s.db.ExecContext(ctx, `
+	_, err = executor.ExecContext(ctx, `
         INSERT INTO observations(
             id, namespace_id, owner_id, subject_id, actor_id, context_id, visibility,
             source_kind, source_reference, content_json, evidence_class, policy_authority,
@@ -31,7 +40,7 @@ func (s *Store) PutObservation(ctx context.Context, observation domain.Observati
 		observation.ID, observation.Scope.Namespace, observation.Scope.Owner, observation.Scope.Subject,
 		observation.Scope.Actor, observation.Scope.Context, observation.Scope.Visibility,
 		observation.SourceKind, observation.SourceReference, string(content), observation.EvidenceClass,
-		observation.PolicyAuthority, string(metadata), formatTime(observation.CapturedAt), formatTime(time.Now().UTC()))
+		observation.PolicyAuthority, string(metadata), formatTime(observation.CapturedAt), formatTime(storedAt))
 	if err != nil {
 		return fmt.Errorf("insert observation: %w", err)
 	}

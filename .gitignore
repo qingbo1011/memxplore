@@ -22,3 +22,6 @@ var/
 runs/
 datasets/
 models/
+
+# Local Chinese documentation mirror.
+docs.zh-CN/

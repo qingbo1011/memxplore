@@ -84,6 +84,7 @@ Security issues should be reported according to [SECURITY.md](SECURITY.md).
 
 ## Project documents
 
+- [Project reading guide](docs/reading-guide.md)
 - [Project charter](docs/CHARTER.md)
 - [Architecture decisions](docs/architecture/adr/README.md)
 - [Strategy Packages](docs/strategy-packages.md)

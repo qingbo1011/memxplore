@@ -84,6 +84,7 @@ v0.1.0 release gate 包含确定性生命周期场景、完整 500-case LongMemE
 
 ## 项目文档
 
+- [项目阅读导览](docs/reading-guide.zh-CN.md)
 - [项目章程](docs/CHARTER.md)
 - [架构决策](docs/architecture/adr/README.md)
 - [Strategy Package 设计](docs/strategy-packages.md)
